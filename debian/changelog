@@ -1,3 +1,9 @@
+network-manager (0.9.10.0-2~bpo70+1) optimus-support; urgency=medium
+
+  * Rebuild for optimus-support.
+
+ -- Alex Ferm (PetroPower) <aferm@petropower.com>  Thu, 09 Oct 2014 15:30:18 -0500
+
 network-manager (0.9.10.0-2) unstable; urgency=medium
 
   * Use default compression for binary packages.
