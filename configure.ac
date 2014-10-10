@@ -46,8 +46,6 @@ AM_PROG_CC_C_O
 # C++ only required if --enable-qt=yes
 AC_PROG_CXX
 
-AC_PROG_LN_S
-
 dnl Initialize libtool
 LT_PREREQ([2.2])
 LT_INIT([disable-static])
@@ -353,8 +351,7 @@ fi
 case $with_suspend_resume in
     upower) ;;
     systemd)
-	# Link against libsystemd-daemon for sd_booted()
-	PKG_CHECK_MODULES(SYSTEMD_INHIBIT, [libsystemd-login >= 183 libsystemd-daemon])
+	PKG_CHECK_MODULES(SYSTEMD_INHIBIT, [libsystemd-login >= 183])
         ;;
     *)
 	AC_MSG_ERROR(--with-suspend-resume must be one of [upower, systemd])
