@@ -46,6 +46,8 @@ AM_PROG_CC_C_O
 # C++ only required if --enable-qt=yes
 AC_PROG_CXX
 
+AC_PROG_LN_S
+
 dnl Initialize libtool
 LT_PREREQ([2.2])
 LT_INIT([disable-static])
@@ -351,7 +353,8 @@ fi
 case $with_suspend_resume in
     upower) ;;
     systemd)
-	PKG_CHECK_MODULES(SYSTEMD_INHIBIT, [libsystemd-login >= 183])
+	# Link against libsystemd-daemon for sd_booted()
+	PKG_CHECK_MODULES(SYSTEMD_INHIBIT, [libsystemd-login >= 183 libsystemd-daemon])
         ;;
     *)
 	AC_MSG_ERROR(--with-suspend-resume must be one of [upower, systemd])
@@ -717,7 +720,7 @@ PKG_CHECK_MODULES(LIBNDP, [libndp])
 
 AC_ARG_WITH(nmtui, AS_HELP_STRING([--with-nmtui=yes|no], [Build nmtui]))
 if test "$with_nmtui" != no; then
-    PKG_CHECK_MODULES(NEWT, [libnewt >= 0.52.15], [build_nmtui=yes], [build_nmtui=no])
+    PKG_CHECK_MODULES(NEWT, [libnewt >= 0.52.14], [build_nmtui=yes], [build_nmtui=no])
 else
     build_nmtui=no
 fi
