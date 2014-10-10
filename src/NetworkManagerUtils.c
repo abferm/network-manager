@@ -47,7 +47,7 @@
 #ifndef CLOCK_BOOTTIME
 #define CLOCK_BOOTTIME 7
 #endif
-+
+
 /*
  * nm_ethernet_address_is_valid
  *
