@@ -1,4 +1,4 @@
-/* -*- Mode: C; tab-width: 5; indent-tabs-mode: t; c-basic-offset: 5 -*- */
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 
 /* NetworkManager system settings service (ifupdown)
  *
@@ -21,10 +21,11 @@
  * (C) Copyright 2008 Canonical Ltd.
  */
 
-#ifndef NM_IFUPDOWN_CONNECTION_H
-#define NM_IFUPDOWN_CONNECTION_H
+#ifndef __NETWORKMANAGER_IFUPDOWN_CONNECTION_H__
+#define __NETWORKMANAGER_IFUPDOWN_CONNECTION_H__
 
 #include <nm-settings-connection.h>
+#include "nm-default.h"
 #include "interface_parser.h"
 
 G_BEGIN_DECLS
@@ -35,8 +36,6 @@ G_BEGIN_DECLS
 #define NM_IS_IFUPDOWN_CONNECTION(obj)         (G_TYPE_CHECK_INSTANCE_TYPE ((obj), NM_TYPE_IFUPDOWN_CONNECTION))
 #define NM_IS_IFUPDOWN_CONNECTION_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), NM_TYPE_IFUPDOWN_CONNECTION))
 #define NM_IFUPDOWN_CONNECTION_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), NM_TYPE_IFUPDOWN_CONNECTION, NMIfupdownConnectionClass))
-
-#define NM_IFUPDOWN_CONNECTION_IFBLOCK "ifblock"
 
 typedef struct {
 	NMSettingsConnection parent;
@@ -52,4 +51,4 @@ NMIfupdownConnection *nm_ifupdown_connection_new (if_block *block);
 
 G_END_DECLS
 
-#endif /* NM_IFUPDOWN_CONNECTION_H */
+#endif /* __NETWORKMANAGER_IFUPDOWN_CONNECTION_H__ */

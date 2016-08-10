@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,23 +15,23 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2008 Novell, Inc.
- * Copyright (C) 2007 - 2011 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2011 Red Hat, Inc.
  */
 
-#include <string.h>
-#include <gio/gio.h>
-#include <glib/gi18n.h>
+#include "nm-default.h"
 
-#include <NetworkManager.h>
-#include <nm-utils.h>
-#include <nm-setting-connection.h>
+#include <string.h>
+
+#include "NetworkManager.h"
+#include "nm-utils.h"
+#include "nm-setting-connection.h"
 #include "nm-remote-connection.h"
 #include "nm-remote-connection-private.h"
 #include "nm-object-private.h"
 #include "nm-dbus-glib-types.h"
-#include "nm-glib-compat.h"
 #include "nm-dbus-helpers-private.h"
+#include "nm-setting-private.h"
 
 #define NM_REMOTE_CONNECTION_BUS "bus"
 #define NM_REMOTE_CONNECTION_DBUS_CONNECTION "dbus-connection"
@@ -70,13 +68,13 @@ typedef struct RemoteCall RemoteCall;
 typedef void (*RemoteCallFetchResultCb) (RemoteCall *call, DBusGProxyCall *proxy_call, GError *error);
 
 
-typedef struct RemoteCall {
+struct RemoteCall {
 	NMRemoteConnection *self;
 	DBusGProxyCall *call;
 	RemoteCallFetchResultCb fetch_result_cb;
 	GFunc callback;
 	gpointer user_data;
-} RemoteCall;
+};
 
 typedef struct {
 	DBusGConnection *bus;
@@ -125,7 +123,7 @@ _nm_remote_connection_ensure_inited (NMRemoteConnection *self)
 			 */
 			if (!g_error_matches (error, DBUS_GERROR, DBUS_GERROR_NO_REPLY)) {
 				g_warning ("%s: (NMRemoteConnection) error initializing: %s\n",
-					       __func__, error->message);
+				           __func__, error->message);
 			}
 			g_error_free (error);
 		}
@@ -450,25 +448,6 @@ nm_remote_connection_get_unsaved (NMRemoteConnection *connection)
 /****************************************************************/
 
 static void
-replace_settings (NMRemoteConnection *self, GHashTable *new_settings)
-{
-	GError *error = NULL;
-
-	if (nm_connection_replace_settings (NM_CONNECTION (self), new_settings, &error))
-		g_signal_emit (self, signals[UPDATED], 0, new_settings);
-	else {
-		g_warning ("%s: error updating connection %s settings: (%d) %s",
-		           __func__,
-		           nm_connection_get_path (NM_CONNECTION (self)),
-		           error ? error->code : -1,
-		           (error && error->message) ? error->message : "(unknown)");
-		g_clear_error (&error);
-
-		g_signal_emit (self, signals[REMOVED], 0);
-	}
-}
-
-static void
 updated_get_settings_cb (DBusGProxy *proxy,
                          DBusGProxyCall *call,
                          gpointer user_data)
@@ -492,13 +471,17 @@ updated_get_settings_cb (DBusGProxy *proxy,
 		 * object.
 		 */
 		hash = g_hash_table_new (g_str_hash, g_str_equal);
-		nm_connection_replace_settings (NM_CONNECTION (self), hash, NULL);
+		_nm_connection_replace_settings (NM_CONNECTION (self), hash);
 		g_hash_table_destroy (hash);
 
 		priv->visible = FALSE;
 		g_signal_emit (self, signals[VISIBLE], 0, FALSE);
 	} else {
-		replace_settings (self, new_settings);
+		gs_unref_object NMConnection *self_alive = NULL;
+
+		self_alive = g_object_ref (self);
+		_nm_connection_replace_settings (NM_CONNECTION (self), new_settings);
+		g_signal_emit (self, signals[UPDATED], 0, new_settings);
 		g_hash_table_destroy (new_settings);
 
 		/* Settings service will handle announcing the connection to clients */
@@ -620,6 +603,7 @@ init_sync (GInitable *initable, GCancellable *cancellable, GError **error)
 {
 	NMRemoteConnectionPrivate *priv = NM_REMOTE_CONNECTION_GET_PRIVATE (initable);
 	GHashTable *hash;
+	gs_unref_object NMConnection *self_alive = NULL;
 
 	if (!dbus_g_proxy_call (priv->proxy, "GetSettings", error,
 	                        G_TYPE_INVALID,
@@ -627,7 +611,9 @@ init_sync (GInitable *initable, GCancellable *cancellable, GError **error)
 	                        G_TYPE_INVALID))
 		return FALSE;
 	priv->visible = TRUE;
-	replace_settings (NM_REMOTE_CONNECTION (initable), hash);
+	self_alive = g_object_ref (initable);
+	_nm_connection_replace_settings (NM_CONNECTION (initable), hash);
+	g_signal_emit (initable, signals[UPDATED], 0, hash);
 	g_hash_table_destroy (hash);
 
 	/* Get properties */
@@ -690,6 +676,7 @@ init_get_settings_cb (DBusGProxy *proxy,
 	NMRemoteConnectionPrivate *priv = NM_REMOTE_CONNECTION_GET_PRIVATE (init_data->connection);
 	GHashTable *settings;
 	GError *error = NULL;
+	gs_unref_object NMConnection *self_alive = NULL;
 
 	dbus_g_proxy_end_call (proxy, call, &error,
 	                       DBUS_TYPE_G_MAP_OF_MAP_OF_VARIANT, &settings,
@@ -700,7 +687,9 @@ init_get_settings_cb (DBusGProxy *proxy,
 	}
 
 	priv->visible = TRUE;
-	replace_settings (init_data->connection, settings);
+	self_alive = g_object_ref (init_data->connection);
+	_nm_connection_replace_settings (NM_CONNECTION (init_data->connection), settings);
+	g_signal_emit (init_data->connection, signals[UPDATED], 0, settings);
 	g_hash_table_destroy (settings);
 
 	/* Grab properties */
@@ -712,8 +701,8 @@ init_get_settings_cb (DBusGProxy *proxy,
 
 static void
 init_async (GAsyncInitable *initable, int io_priority,
-			GCancellable *cancellable, GAsyncReadyCallback callback,
-			gpointer user_data)
+            GCancellable *cancellable, GAsyncReadyCallback callback,
+            gpointer user_data)
 {
 	NMRemoteConnectionInitData *init_data;
 	NMRemoteConnectionPrivate *priv = NM_REMOTE_CONNECTION_GET_PRIVATE (initable);
@@ -864,29 +853,34 @@ nm_remote_connection_class_init (NMRemoteConnectionClass *remote_class)
 	object_class->constructed = constructed;
 
 	/* Properties */
+	/**
+	 * NMRemoteConnection:bus:
+	 *
+	 * The #DBusGConnection that the #NMRemoteConnection is connected to.
+	 */
 	g_object_class_install_property
 		(object_class, PROP_BUS,
-		 g_param_spec_boxed (NM_REMOTE_CONNECTION_BUS,
-							 "DBusGConnection",
-							 "DBusGConnection",
-							 DBUS_TYPE_G_CONNECTION,
-							 G_PARAM_WRITABLE | G_PARAM_CONSTRUCT_ONLY));
+		 g_param_spec_boxed (NM_REMOTE_CONNECTION_BUS, "", "",
+		                     DBUS_TYPE_G_CONNECTION,
+		                     G_PARAM_WRITABLE |
+		                     G_PARAM_CONSTRUCT_ONLY |
+		                     G_PARAM_STATIC_STRINGS));
 
 	/* These are needed so _nm_object_create() can create NMRemoteConnections */
 	g_object_class_install_property
 		(object_class, PROP_DBUS_CONNECTION,
-		 g_param_spec_boxed (NM_REMOTE_CONNECTION_DBUS_CONNECTION,
-		                     "DBusGConnection",
-		                     "DBusGConnection",
+		 g_param_spec_boxed (NM_REMOTE_CONNECTION_DBUS_CONNECTION, "", "",
 		                     DBUS_TYPE_G_CONNECTION,
-		                     G_PARAM_WRITABLE | G_PARAM_CONSTRUCT_ONLY));
+		                     G_PARAM_WRITABLE |
+		                     G_PARAM_CONSTRUCT_ONLY |
+		                     G_PARAM_STATIC_STRINGS));
 	g_object_class_install_property
 		(object_class, PROP_DBUS_PATH,
-		 g_param_spec_string (NM_REMOTE_CONNECTION_DBUS_PATH,
-		                      "Object Path",
-		                      "DBus Object Path",
+		 g_param_spec_string (NM_REMOTE_CONNECTION_DBUS_PATH, "", "",
 		                      NULL,
-		                      G_PARAM_WRITABLE | G_PARAM_CONSTRUCT_ONLY));
+		                      G_PARAM_WRITABLE |
+		                      G_PARAM_CONSTRUCT_ONLY |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMRemoteConnection:unsaved:
@@ -896,12 +890,12 @@ nm_remote_connection_class_init (NMRemoteConnectionClass *remote_class)
 	 *
 	 * Since: 0.9.10
 	 **/
-	g_object_class_install_property (object_class, PROP_UNSAVED,
-		 g_param_spec_boolean (NM_REMOTE_CONNECTION_UNSAVED,
-		                       "Unsaved",
-		                       "Unsaved",
+	g_object_class_install_property
+		(object_class, PROP_UNSAVED,
+		 g_param_spec_boolean (NM_REMOTE_CONNECTION_UNSAVED, "", "",
 		                       FALSE,
-		                       G_PARAM_READABLE));
+		                       G_PARAM_READABLE |
+		                       G_PARAM_STATIC_STRINGS));
 
 	/* Signals */
 	/**
@@ -911,7 +905,7 @@ nm_remote_connection_class_init (NMRemoteConnectionClass *remote_class)
 	 * This signal is emitted when a connection changes, and it is
 	 * still visible to the user.
 	 */
-	signals[UPDATED] = 
+	signals[UPDATED] =
 		g_signal_new (NM_REMOTE_CONNECTION_UPDATED,
 		              G_TYPE_FROM_CLASS (remote_class),
 		              G_SIGNAL_RUN_FIRST,
@@ -927,12 +921,12 @@ nm_remote_connection_class_init (NMRemoteConnectionClass *remote_class)
 	 * This signal is emitted when a connection is either deleted or becomes
 	 * invisible to the current user.
 	 */
-	signals[REMOVED] = 
+	signals[REMOVED] =
 		g_signal_new (NM_REMOTE_CONNECTION_REMOVED,
 		              G_TYPE_FROM_CLASS (remote_class),
 		              G_SIGNAL_RUN_FIRST,
 		              G_STRUCT_OFFSET (NMRemoteConnectionClass, removed),
-	 	              NULL, NULL,
+		              NULL, NULL,
 		              g_cclosure_marshal_VOID__VOID,
 		              G_TYPE_NONE, 0);
 

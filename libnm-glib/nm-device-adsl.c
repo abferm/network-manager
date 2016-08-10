@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -21,13 +19,16 @@
  * Copyright 2009 - 2011 Red Hat, Inc.
  */
 
+#include "nm-default.h"
+
 #include "nm-device-adsl.h"
+
+#include <string.h>
+
 #include "nm-device-private.h"
 #include "nm-object-private.h"
 
 #include "nm-setting-adsl.h"
-
-#include <string.h>
 
 G_DEFINE_TYPE (NMDeviceAdsl, nm_device_adsl, NM_TYPE_DEVICE)
 
@@ -237,9 +238,8 @@ nm_device_adsl_class_init (NMDeviceAdslClass *adsl_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_CARRIER,
-		 g_param_spec_boolean (NM_DEVICE_ADSL_CARRIER,
-		                       "Carrier",
-		                       "Carrier",
+		 g_param_spec_boolean (NM_DEVICE_ADSL_CARRIER, "", "",
 		                       FALSE,
-		                       G_PARAM_READABLE));
+		                       G_PARAM_READABLE |
+		                       G_PARAM_STATIC_STRINGS));
 }

@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,8 +15,8 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2008 Novell, Inc.
- * Copyright (C) 2007 - 2012 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2012 Red Hat, Inc.
  */
 
 #ifndef NM_CLIENT_H
@@ -59,6 +57,7 @@ G_BEGIN_DECLS
 #define NM_CLIENT_PRIMARY_CONNECTION "primary-connection"
 #define NM_CLIENT_ACTIVATING_CONNECTION "activating-connection"
 #define NM_CLIENT_DEVICES "devices"
+#define NM_CLIENT_ALL_DEVICES "all-devices"
 
 /**
  * NMClientPermission:
@@ -85,6 +84,10 @@ G_BEGIN_DECLS
  *  owned by the current user can be modified
  * @NM_CLIENT_PERMISSION_SETTINGS_MODIFY_HOSTNAME: controls whether the
  *  persistent hostname can be changed
+ * @NM_CLIENT_PERMISSION_SETTINGS_MODIFY_GLOBAL_DNS: modify persistent global
+ *  DNS configuration
+ * @NM_CLIENT_PERMISSION_RELOAD: controls access to Reload.
+ *  persistent hostname can be changed
  * @NM_CLIENT_PERMISSION_LAST: a reserved boundary value
  *
  * #NMClientPermission values indicate various permissions that NetworkManager
@@ -103,8 +106,10 @@ typedef enum {
 	NM_CLIENT_PERMISSION_SETTINGS_MODIFY_SYSTEM = 9,
 	NM_CLIENT_PERMISSION_SETTINGS_MODIFY_OWN = 10,
 	NM_CLIENT_PERMISSION_SETTINGS_MODIFY_HOSTNAME = 11,
+	NM_CLIENT_PERMISSION_SETTINGS_MODIFY_GLOBAL_DNS = 12,
+	NM_CLIENT_PERMISSION_RELOAD = 13,
 
-	NM_CLIENT_PERMISSION_LAST = NM_CLIENT_PERMISSION_SETTINGS_MODIFY_HOSTNAME
+	NM_CLIENT_PERMISSION_LAST = 13,
 } NMClientPermission;
 
 /**
@@ -177,6 +182,8 @@ NMClient *nm_client_new_finish (GAsyncResult         *result,
                                 GError              **error);
 
 const GPtrArray *nm_client_get_devices    (NMClient *client);
+NM_AVAILABLE_IN_1_2
+const GPtrArray *nm_client_get_all_devices(NMClient *client);
 NMDevice *nm_client_get_device_by_path    (NMClient *client, const char *object_path);
 NMDevice *nm_client_get_device_by_iface   (NMClient *client, const char *iface);
 

@@ -25,6 +25,12 @@ case "$1" in
 	    fi
 	fi
 
+	if dpkg --compare-versions "$2" lt "1.0.0-4"; then
+	    if [ -L /etc/systemd/system/dbus-org.freedesktop.NetworkManager.service ]; then
+	        rm -f /etc/systemd/system/dbus-org.freedesktop.NetworkManager.service
+	    fi
+	fi
+
 	# Upgrade from previous versions
 	if dpkg --compare-versions "$2" lt "0.9.7.997-2"; then
 	    # Move old pid file to /var/run/NetworkManager so the init script
@@ -33,6 +39,11 @@ case "$1" in
 	        [ -d /var/run/NetworkManager/ ] || mkdir /var/run/NetworkManager
 	        mv -n /var/run/NetworkManager.pid /var/run/NetworkManager/
 	    fi
+	fi
+
+	# Purge the state so the service gets properly enabled on upgrades
+	if dpkg --compare-versions "$2" lt "1.2.2-2"; then
+	    deb-systemd-helper purge NetworkManager-wait-online.service
 	fi
 	;;
 

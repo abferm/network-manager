@@ -3,12 +3,12 @@ include $(GLIB_MAKEFILE)
 SUBDIRS = . tests
 
 AM_CPPFLAGS = \
-	-I$(top_srcdir)/include \
-	-I$(top_builddir)/include \
+	-I$(top_srcdir)/shared \
+	-I$(top_builddir)/shared \
 	-I$(top_srcdir)/libnm-util \
 	-I$(top_builddir)/libnm-util \
 	-DG_LOG_DOMAIN=\""libnm-glib"\" \
-	-DNM_VERSION_MAX_ALLOWED=NM_VERSION_NEXT_STABLE \
+	-DNETWORKMANAGER_COMPILATION=NM_NETWORKMANAGER_COMPILATION_LIB_LEGACY \
 	$(DBUS_CFLAGS) \
 	$(GLIB_CFLAGS)
 
@@ -18,8 +18,7 @@ BUILT_SOURCES = \
 
 
 noinst_LTLIBRARIES = \
-	libdeprecated-nm-glib.la \
-	libnm-glib-test.la
+	libdeprecated-nm-glib.la
 
 #####################################################
 # Deprecated original libnm_glib bits
@@ -153,7 +152,7 @@ libnm_glib_la_LIBADD = \
 SYMBOL_VIS_FILE=$(srcdir)/libnm-glib.ver
 
 libnm_glib_la_LDFLAGS = -Wl,--version-script=$(SYMBOL_VIS_FILE) \
-	-version-info "12:0:8"
+	-version-info "13:0:9"
 
 noinst_PROGRAMS = libnm-glib-test
 
@@ -175,27 +174,6 @@ libnm_glib_vpn_la_LDFLAGS = -Wl,--version-script=$(srcdir)/libnm-glib-vpn.ver \
 	-version-info "3:0:2"
 
 BUILT_SOURCES += $(GLIB_GENERATED)
-
-#####################################################
-# Test libnm-glib stuff
-#####################################################
-
-libnm_glib_test_la_CFLAGS = \
-	$(GLIB_CFLAGS) \
-	$(DBUS_CFLAGS) \
-	$(GUDEV_CFLAGS) \
-	-DLIBNM_GLIB_TEST \
-	-DNMRUNDIR=\"$(nmrundir)\"
-
-libnm_glib_test_la_SOURCES = \
-	$(libnminclude_HEADERS) \
-	$(libnm_glib_la_SOURCES)
-
-libnm_glib_test_la_LIBADD = \
-	$(top_builddir)/libnm-util/libnm-util.la \
-	$(GLIB_LIBS) \
-	$(DBUS_LIBS) \
-	$(GUDEV_LIBS)
 
 #####################################################
 

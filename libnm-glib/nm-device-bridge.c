@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,18 +15,17 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2012 Red Hat, Inc.
+ * Copyright 2012 Red Hat, Inc.
  */
 
-#include <config.h>
+#include "nm-default.h"
+
 #include <string.h>
 #include <netinet/ether.h>
 
-#include "nm-glib-compat.h"
-
-#include <nm-setting-connection.h>
-#include <nm-setting-bridge.h>
-#include <nm-utils.h>
+#include "nm-setting-connection.h"
+#include "nm-setting-bridge.h"
+#include "nm-utils.h"
 
 #include "nm-device-bridge.h"
 #include "nm-device-private.h"
@@ -147,7 +144,7 @@ nm_device_bridge_get_carrier (NMDeviceBridge *device)
  *
  * Gets the devices currently slaved to @device.
  *
- * Returns: (element-type NMClient.Device): the #GPtrArray containing
+ * Returns: (element-type NMDevice): the #GPtrArray containing
  * #NMDevices that are slaves of @device. This is the internal
  * copy used by the device, and must not be modified.
  *
@@ -326,11 +323,10 @@ nm_device_bridge_class_init (NMDeviceBridgeClass *bridge_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_HW_ADDRESS,
-		 g_param_spec_string (NM_DEVICE_BRIDGE_HW_ADDRESS,
-		                      "Active MAC Address",
-		                      "Currently set hardware MAC address",
+		 g_param_spec_string (NM_DEVICE_BRIDGE_HW_ADDRESS, "", "",
 		                      NULL,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMDeviceBridge:carrier:
@@ -341,11 +337,10 @@ nm_device_bridge_class_init (NMDeviceBridgeClass *bridge_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_CARRIER,
-		 g_param_spec_boolean (NM_DEVICE_BRIDGE_CARRIER,
-		                       "Carrier",
-		                       "Carrier",
+		 g_param_spec_boolean (NM_DEVICE_BRIDGE_CARRIER, "", "",
 		                       FALSE,
-		                       G_PARAM_READABLE));
+		                       G_PARAM_READABLE |
+		                       G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMDeviceBridge:slaves:
@@ -356,9 +351,8 @@ nm_device_bridge_class_init (NMDeviceBridgeClass *bridge_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_SLAVES,
-		 g_param_spec_boxed (NM_DEVICE_BRIDGE_SLAVES,
-		                     "Slaves",
-		                     "Slaves",
+		 g_param_spec_boxed (NM_DEVICE_BRIDGE_SLAVES, "", "",
 		                     NM_TYPE_OBJECT_ARRAY,
-		                     G_PARAM_READABLE));
+		                     G_PARAM_READABLE |
+		                     G_PARAM_STATIC_STRINGS));
 }

@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -20,7 +18,7 @@
  * Copyright 2013 Red Hat, Inc.
  */
 
-#include <config.h>
+#include "nm-default.h"
 
 #include <string.h>
 
@@ -186,15 +184,41 @@ register_properties (NMDeviceGeneric *device)
 	                                property_info);
 }
 
+static const char *
+_device_type_to_interface (NMDeviceType type)
+{
+	switch (type) {
+	case NM_DEVICE_TYPE_GENERIC:
+		return NM_DBUS_INTERFACE_DEVICE_GENERIC;
+	case NM_DEVICE_TYPE_TUN:
+		return NM_DBUS_INTERFACE_DEVICE_TUN;
+	default:
+		return NULL;
+	}
+}
+
 static void
 constructed (GObject *object)
 {
 	NMDeviceGenericPrivate *priv = NM_DEVICE_GENERIC_GET_PRIVATE (object);
+	NMDeviceType type;
+	DBusGConnection *connection;
+	const char *path, *interface;
 
 	G_OBJECT_CLASS (nm_device_generic_parent_class)->constructed (object);
 
-	priv->proxy = _nm_object_new_proxy (NM_OBJECT (object), NULL, NM_DBUS_INTERFACE_DEVICE_GENERIC);
-	register_properties (NM_DEVICE_GENERIC (object));
+	g_object_get (object,
+	              NM_OBJECT_DBUS_CONNECTION, &connection,
+	              NM_OBJECT_DBUS_PATH, &path,
+	              NULL);
+
+	type = _nm_device_type_for_path (connection, path);
+	interface = _device_type_to_interface (type);
+
+	if (interface) {
+		priv->proxy = _nm_object_new_proxy (NM_OBJECT (object), NULL, interface);
+		register_properties (NM_DEVICE_GENERIC (object));
+	}
 }
 
 static void
@@ -266,11 +290,10 @@ nm_device_generic_class_init (NMDeviceGenericClass *klass)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_HW_ADDRESS,
-		 g_param_spec_string (NM_DEVICE_GENERIC_HW_ADDRESS,
-		                      "Hardware Address",
-		                      "Hardware address",
+		 g_param_spec_string (NM_DEVICE_GENERIC_HW_ADDRESS, "", "",
 		                      NULL,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMDeviceGeneric:type-description:
@@ -280,10 +303,8 @@ nm_device_generic_class_init (NMDeviceGenericClass *klass)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_TYPE_DESCRIPTION,
-		 g_param_spec_string (NM_DEVICE_GENERIC_TYPE_DESCRIPTION,
-		                      "Type Description",
-		                      "Type description",
+		 g_param_spec_string (NM_DEVICE_GENERIC_TYPE_DESCRIPTION, "", "",
 		                      NULL,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 }
-

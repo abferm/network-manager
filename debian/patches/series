@@ -1,7 +1,9 @@
-0001-Debian-specific-tweaks-for-NetworkManager-systemd-se.patch
-0002-Force-online-state-with-unmanaged-devices.patch
-0003-Don-t-setup-Sleep-Monitor-if-not-booted-with-systemd.patch
-0004-Use-symlinks-for-nmtui.patch
-0005-Mark-virtual-ethernet-interfaces-as-unmanaged.patch
-0006-tui-fix-Wi-Fi-section-of-nmtui-connect-list-in-non-U.patch
-debian-changes
+Force-online-state-with-unmanaged-devices.patch
+Don-t-setup-Sleep-Monitor-if-not-booted-with-systemd.patch
+fix-arping-path.patch
+Check-at-runtime-whether-to-start-ModemManager.patch
+Don-t-make-NetworkManager-D-Bus-activatable.patch
+systemd-Don-t-enable-NetworkManager-wait-online.service-s.patch
+Fix-iscsiadm-path.patch
+wifi-clear-WiFi-requested_scan-if-suppl-exits.patch
+wifi-clear-WiFi-requested_scan-if-suppl-goes-INACTIVE.patch

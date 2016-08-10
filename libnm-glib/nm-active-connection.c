@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,9 +15,11 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2014 Red Hat, Inc.
- * Copyright (C) 2008 Novell, Inc.
+ * Copyright 2007 - 2014 Red Hat, Inc.
+ * Copyright 2008 Novell, Inc.
  */
+
+#include "nm-default.h"
 
 #include <string.h>
 
@@ -31,7 +31,6 @@
 #include "nm-device-private.h"
 #include "nm-connection.h"
 #include "nm-vpn-connection.h"
-#include "nm-glib-compat.h"
 #include "nm-dbus-helpers-private.h"
 
 static GType _nm_active_connection_type_for_path (DBusGConnection *connection,
@@ -106,9 +105,9 @@ nm_active_connection_new (DBusGConnection *connection, const char *path)
 	g_return_val_if_fail (path != NULL, NULL);
 
 	return g_object_new (NM_TYPE_ACTIVE_CONNECTION,
-						 NM_OBJECT_DBUS_CONNECTION, connection,
-						 NM_OBJECT_DBUS_PATH, path,
-						 NULL);
+	                     NM_OBJECT_DBUS_CONNECTION, connection,
+	                     NM_OBJECT_DBUS_PATH, path,
+	                     NULL);
 }
 
 static GType
@@ -120,7 +119,7 @@ _nm_active_connection_type_for_path (DBusGConnection *connection,
 	GValue value = G_VALUE_INIT;
 	GType type;
 
-	proxy = _nm_dbus_new_proxy_for_connection (connection, path, "org.freedesktop.DBus.Properties");
+	proxy = _nm_dbus_new_proxy_for_connection (connection, path, DBUS_INTERFACE_PROPERTIES);
 	if (!proxy) {
 		g_warning ("%s: couldn't create D-Bus object proxy.", __func__);
 		return G_TYPE_INVALID;
@@ -140,8 +139,8 @@ _nm_active_connection_type_for_path (DBusGConnection *connection,
 		else
 			type = NM_TYPE_ACTIVE_CONNECTION;
 	} else {
-		g_warning ("Error in getting active connection 'Vpn' property: (%d) %s",
-		           error->code, error->message);
+		g_warning ("Error in getting active connection 'Vpn' property: %s",
+		           error->message);
 		g_error_free (error);
 		type = G_TYPE_INVALID;
 	}
@@ -197,7 +196,7 @@ _nm_active_connection_type_for_path_async (DBusGConnection *connection,
 	async_data->callback = callback;
 	async_data->user_data = user_data;
 
-	proxy = _nm_dbus_new_proxy_for_connection (connection, path, "org.freedesktop.DBus.Properties");
+	proxy = _nm_dbus_new_proxy_for_connection (connection, path, DBUS_INTERFACE_PROPERTIES);
 	dbus_g_proxy_begin_call (proxy, "Get",
 	                         async_got_type, async_data, NULL,
 	                         G_TYPE_STRING, NM_DBUS_INTERFACE_ACTIVE_CONNECTION,
@@ -308,7 +307,7 @@ nm_active_connection_get_specific_object (NMActiveConnection *connection)
  *
  * Gets the #NMDevices used for the active connections.
  *
- * Returns: (element-type NMClient.Device): the #GPtrArray containing #NMDevices.
+ * Returns: (element-type NMDevice): the #GPtrArray containing #NMDevices.
  * This is the internal copy used by the connection, and must not be modified.
  **/
 const GPtrArray *
@@ -662,11 +661,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_CONNECTION,
-		 g_param_spec_string (NM_ACTIVE_CONNECTION_CONNECTION,
-						      "Connection",
-						      "Connection",
-						      NULL,
-						      G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACTIVE_CONNECTION_CONNECTION, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:id:
@@ -677,11 +675,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_ID,
-		 g_param_spec_string (NM_ACTIVE_CONNECTION_ID,
-						      "ID",
-						      "ID",
-						      NULL,
-						      G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACTIVE_CONNECTION_ID, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:uuid:
@@ -690,11 +687,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_UUID,
-		 g_param_spec_string (NM_ACTIVE_CONNECTION_UUID,
-						      "UUID",
-						      "UUID",
-						      NULL,
-						      G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACTIVE_CONNECTION_UUID, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:type:
@@ -705,11 +701,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_TYPE,
-		 g_param_spec_string (NM_ACTIVE_CONNECTION_TYPE,
-						      "Type",
-						      "Type",
-						      NULL,
-						      G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACTIVE_CONNECTION_TYPE, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:specific-object:
@@ -718,11 +713,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_SPECIFIC_OBJECT,
-		 g_param_spec_string (NM_ACTIVE_CONNECTION_SPECIFIC_OBJECT,
-						      "Specific object",
-						      "Specific object",
-						      NULL,
-						      G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACTIVE_CONNECTION_SPECIFIC_OBJECT, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:device:
@@ -731,11 +725,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_DEVICES,
-		 g_param_spec_boxed (NM_ACTIVE_CONNECTION_DEVICES,
-						       "Devices",
-						       "Devices",
-						       NM_TYPE_OBJECT_ARRAY,
-						       G_PARAM_READABLE));
+		 g_param_spec_boxed (NM_ACTIVE_CONNECTION_DEVICES, "", "",
+		                     NM_TYPE_OBJECT_ARRAY,
+		                     G_PARAM_READABLE |
+		                     G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:state:
@@ -744,13 +737,12 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_STATE,
-		 g_param_spec_uint (NM_ACTIVE_CONNECTION_STATE,
-							  "State",
-							  "State",
-							  NM_ACTIVE_CONNECTION_STATE_UNKNOWN,
-							  NM_ACTIVE_CONNECTION_STATE_DEACTIVATING,
-							  NM_ACTIVE_CONNECTION_STATE_UNKNOWN,
-							  G_PARAM_READABLE));
+		 g_param_spec_uint (NM_ACTIVE_CONNECTION_STATE, "", "",
+		                    NM_ACTIVE_CONNECTION_STATE_UNKNOWN,
+		                    NM_ACTIVE_CONNECTION_STATE_DEACTIVATING,
+		                    NM_ACTIVE_CONNECTION_STATE_UNKNOWN,
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:default:
@@ -759,11 +751,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_DEFAULT,
-		 g_param_spec_boolean (NM_ACTIVE_CONNECTION_DEFAULT,
-							   "Default",
-							   "Is the default IPv4 active connection",
-							   FALSE,
-							   G_PARAM_READABLE));
+		 g_param_spec_boolean (NM_ACTIVE_CONNECTION_DEFAULT, "", "",
+		                       FALSE,
+		                       G_PARAM_READABLE |
+		                       G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:ip4-config:
@@ -774,11 +765,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_IP4_CONFIG,
-		 g_param_spec_object (NM_ACTIVE_CONNECTION_IP4_CONFIG,
-		                      "IP4 Config",
-		                      "IP4 Config",
+		 g_param_spec_object (NM_ACTIVE_CONNECTION_IP4_CONFIG, "", "",
 		                      NM_TYPE_IP4_CONFIG,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:dhcp4-config:
@@ -789,11 +779,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_DHCP4_CONFIG,
-		 g_param_spec_object (NM_ACTIVE_CONNECTION_DHCP4_CONFIG,
-		                      "DHCP4 Config",
-		                      "DHCP4 Config",
+		 g_param_spec_object (NM_ACTIVE_CONNECTION_DHCP4_CONFIG, "", "",
 		                      NM_TYPE_DHCP4_CONFIG,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:default6:
@@ -802,11 +791,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_DEFAULT6,
-		 g_param_spec_boolean (NM_ACTIVE_CONNECTION_DEFAULT6,
-							   "Default6",
-							   "Is the default IPv6 active connection",
-							   FALSE,
-							   G_PARAM_READABLE));
+		 g_param_spec_boolean (NM_ACTIVE_CONNECTION_DEFAULT6, "", "",
+		                       FALSE,
+		                       G_PARAM_READABLE |
+		                       G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:ip6-config:
@@ -817,11 +805,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_IP6_CONFIG,
-		 g_param_spec_object (NM_ACTIVE_CONNECTION_IP6_CONFIG,
-		                      "IP6 Config",
-		                      "IP6 Config",
+		 g_param_spec_object (NM_ACTIVE_CONNECTION_IP6_CONFIG, "", "",
 		                      NM_TYPE_IP6_CONFIG,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:dhcp6-config:
@@ -832,11 +819,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_DHCP6_CONFIG,
-		 g_param_spec_object (NM_ACTIVE_CONNECTION_DHCP6_CONFIG,
-		                      "DHCP6 Config",
-		                      "DHCP6 Config",
+		 g_param_spec_object (NM_ACTIVE_CONNECTION_DHCP6_CONFIG, "", "",
 		                      NM_TYPE_DHCP6_CONFIG,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:vpn:
@@ -847,11 +833,10 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_VPN,
-		 g_param_spec_boolean (NM_ACTIVE_CONNECTION_VPN,
-		                       "VPN",
-		                       "Is a VPN connection",
+		 g_param_spec_boolean (NM_ACTIVE_CONNECTION_VPN, "", "",
 		                       FALSE,
-		                       G_PARAM_READABLE));
+		                       G_PARAM_READABLE |
+		                       G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMActiveConnection:master:
@@ -860,9 +845,8 @@ nm_active_connection_class_init (NMActiveConnectionClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_MASTER,
-		 g_param_spec_string (NM_ACTIVE_CONNECTION_MASTER,
-						      "Master",
-						      "Path of the master device",
-						      NULL,
-						      G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACTIVE_CONNECTION_MASTER, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 }

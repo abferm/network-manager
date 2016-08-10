@@ -10,7 +10,9 @@ DOC_MAIN_SGML_FILE=$(DOC_MODULE)-docs.sgml
 # The directory containing the source code. Relative to $(srcdir).
 # gtk-doc will search all .c & .h files beneath here for inline comments
 # documenting functions and macros.
-DOC_SOURCE_DIR=$(top_srcdir)/libnm-util
+DOC_SOURCE_DIR= \
+	$(top_builddir)/libnm-util \
+	$(top_srcdir)/libnm-util
 
 # Extra options to supply to gtkdoc-scan.
 SCAN_OPTIONS=--rebuild-types --rebuild-sections
@@ -35,7 +37,8 @@ IGNORE_HFILES= \
 	nm-utils-private.h \
 	nm-setting-private.h \
 	nm-param-spec-specialized.h \
-	nm-test-utils.h
+	nm-test-utils.h \
+	nm-version.h
 
 # Images to copy into HTML directory.
 HTML_IMAGES = 
@@ -50,9 +53,9 @@ extra_files =
 # CFLAGS and LDFLAGS for compiling scan program. Only needed
 # if $(DOC_MODULE).types is non-empty.
 GTKDOC_CFLAGS =				\
-	-I$(top_srcdir)/include		\
 	-I$(top_srcdir)/libnm-util	\
 	-DNM_VERSION_MAX_ALLOWED=NM_VERSION_NEXT_STABLE \
+	-DNM_VERSION_MIN_REQUIRED=NM_VERSION_0_9_8 \
 	$(GLIB_CFLAGS)			\
 	$(DBUS_CFLAGS)
 

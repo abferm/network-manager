@@ -22,48 +22,38 @@
  * (C) Copyright 2009 - 2011 Red Hat, Inc.
  */
 
+#include "nm-default.h"
+
 #include <string.h>
-#include <sys/inotify.h>
-
-#include <net/ethernet.h>
-#include <netinet/ether.h>
-
+#include <arpa/inet.h>
+#include <gudev/gudev.h>
 #include <gmodule.h>
-#include <glib-object.h>
-#include <glib/gi18n.h>
-#include <glib.h>
-#include <nm-setting-connection.h>
+
+#include "nm-setting-connection.h"
 
 #include "interface_parser.h"
 
-#include "NetworkManager.h"
-#include "nm-system-config-interface.h"
+#include "nm-dbus-interface.h"
+#include "nm-settings-plugin.h"
 #include "nm-setting-ip4-config.h"
 #include "nm-setting-wireless.h"
 #include "nm-setting-wired.h"
 #include "nm-setting-ppp.h"
 #include "nm-utils.h"
+#include "nm-core-internal.h"
+#include "NetworkManagerUtils.h"
 
 #include "nm-ifupdown-connection.h"
 #include "plugin.h"
 #include "parser.h"
-#include "nm-inotify-helper.h"
 
-#include "nm-logging.h"
 #include "nm-config.h"
-
-#include <arpa/inet.h>
-
-#include <gudev/gudev.h>
 
 #define ENI_INTERFACES_FILE "/etc/network/interfaces"
 
 #define IFUPDOWN_PLUGIN_NAME "ifupdown"
 #define IFUPDOWN_PLUGIN_INFO "(C) 2008 Canonical Ltd.  To report bugs please use the NetworkManager mailing list."
-#define IFUPDOWN_SYSTEM_HOSTNAME_FILE "/etc/hostname"
 
-#define IFUPDOWN_KEY_FILE_GROUP "ifupdown"
-#define IFUPDOWN_KEY_FILE_KEY_MANAGED "managed"
 #define IFUPDOWN_UNMANAGE_WELL_KNOWN_DEFAULT TRUE
 
 /* #define ALWAYS_UNMANAGE TRUE */
@@ -75,7 +65,6 @@ typedef struct {
 	GUdevClient *client;
 
 	GHashTable *connections;  /* /e/n/i block name :: NMIfupdownConnection */
-	gchar* hostname;
 
 	/* Stores all blocks/interfaces read from /e/n/i regardless of whether
 	 * there is an NMIfupdownConnection for block.
@@ -86,31 +75,31 @@ typedef struct {
 	GHashTable *kernel_ifaces;
 
 	gboolean unmanage_well_known;
-
-	gulong inotify_event_id;
-	int inotify_system_hostname_wd;
-} SCPluginIfupdownPrivate;
+} SettingsPluginIfupdownPrivate;
 
 static void
-system_config_interface_init (NMSystemConfigInterface *system_config_interface_class);
+settings_plugin_interface_init (NMSettingsPluginInterface *plugin_iface);
 
-G_DEFINE_TYPE_EXTENDED (SCPluginIfupdown, sc_plugin_ifupdown, G_TYPE_OBJECT, 0,
-                        G_IMPLEMENT_INTERFACE (NM_TYPE_SYSTEM_CONFIG_INTERFACE,
-                                               system_config_interface_init))
+G_DEFINE_TYPE_EXTENDED (SettingsPluginIfupdown, settings_plugin_ifupdown, G_TYPE_OBJECT, 0,
+                        G_IMPLEMENT_INTERFACE (NM_TYPE_SETTINGS_PLUGIN,
+                                               settings_plugin_interface_init))
 
-#define SC_PLUGIN_IFUPDOWN_GET_PRIVATE(o) (G_TYPE_INSTANCE_GET_PRIVATE ((o), SC_TYPE_PLUGIN_IFUPDOWN, SCPluginIfupdownPrivate))
+#define SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE(o) (G_TYPE_INSTANCE_GET_PRIVATE ((o), SETTINGS_TYPE_PLUGIN_IFUPDOWN, SettingsPluginIfupdownPrivate))
+
+static SettingsPluginIfupdown *settings_plugin_ifupdown_get (void);
+NM_DEFINE_SINGLETON_GETTER (SettingsPluginIfupdown, settings_plugin_ifupdown_get, SETTINGS_TYPE_PLUGIN_IFUPDOWN);
 
 static void
-sc_plugin_ifupdown_class_init (SCPluginIfupdownClass *req_class);
+settings_plugin_ifupdown_class_init (SettingsPluginIfupdownClass *req_class);
 
 static void
-SCPluginIfupdown_init (NMSystemConfigInterface *config);
+init (NMSettingsPlugin *config);
 
 /* Returns the plugins currently known list of connections.  The returned
  * list is freed by the system settings service.
  */
 static GSList*
-SCPluginIfupdown_get_connections (NMSystemConfigInterface *config);
+get_connections (NMSettingsPlugin *config);
 
 /*
  * Return a list of device specifications which NetworkManager should not
@@ -118,75 +107,58 @@ SCPluginIfupdown_get_connections (NMSystemConfigInterface *config);
  * each element must be allocated using g_malloc() or its variants.
  */
 static GSList*
-SCPluginIfupdown_get_unmanaged_specs (NMSystemConfigInterface *config);
+get_unmanaged_specs (NMSettingsPlugin *config);
 
 
 /*  GObject */
 static void
-GObject__get_property (GObject *object, guint prop_id,
+get_property (GObject *object, guint prop_id,
 				   GValue *value, GParamSpec *pspec);
 
 static void
-GObject__set_property (GObject *object, guint prop_id,
+set_property (GObject *object, guint prop_id,
 				   const GValue *value, GParamSpec *pspec);
 
 static void
-GObject__dispose (GObject *object);
-
-/* other helpers */
-static const char *
-get_hostname (NMSystemConfigInterface *config);
-
+dispose (GObject *object);
 
 static void
-update_system_hostname(NMInotifyHelper *inotify_helper,
-                       struct inotify_event *evt,
-                       const char *path,
-                       NMSystemConfigInterface *config);
-
-
-static void
-system_config_interface_init (NMSystemConfigInterface *system_config_interface_class)
+settings_plugin_interface_init (NMSettingsPluginInterface *plugin_iface)
 {
-	system_config_interface_class->init = SCPluginIfupdown_init;
-	system_config_interface_class->get_connections = SCPluginIfupdown_get_connections;
-	system_config_interface_class->get_unmanaged_specs = SCPluginIfupdown_get_unmanaged_specs;
+	plugin_iface->init = init;
+	plugin_iface->get_connections = get_connections;
+	plugin_iface->get_unmanaged_specs = get_unmanaged_specs;
 }
 
 static void
-sc_plugin_ifupdown_class_init (SCPluginIfupdownClass *req_class)
+settings_plugin_ifupdown_class_init (SettingsPluginIfupdownClass *req_class)
 {
 	GObjectClass *object_class = G_OBJECT_CLASS (req_class);
 
-	g_type_class_add_private (req_class, sizeof (SCPluginIfupdownPrivate));
+	g_type_class_add_private (req_class, sizeof (SettingsPluginIfupdownPrivate));
 
-	object_class->dispose = GObject__dispose;
-	object_class->get_property = GObject__get_property;
-	object_class->set_property = GObject__set_property;
-
-	g_object_class_override_property (object_class,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_PROP_NAME,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_NAME);
+	object_class->dispose = dispose;
+	object_class->get_property = get_property;
+	object_class->set_property = set_property;
 
 	g_object_class_override_property (object_class,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_PROP_INFO,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_INFO);
+	                                  NM_SETTINGS_PLUGIN_PROP_NAME,
+	                                  NM_SETTINGS_PLUGIN_NAME);
 
 	g_object_class_override_property (object_class,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_PROP_CAPABILITIES,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_CAPABILITIES);
+	                                  NM_SETTINGS_PLUGIN_PROP_INFO,
+	                                  NM_SETTINGS_PLUGIN_INFO);
 
 	g_object_class_override_property (object_class,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_PROP_HOSTNAME,
-	                                  NM_SYSTEM_CONFIG_INTERFACE_HOSTNAME);
+	                                  NM_SETTINGS_PLUGIN_PROP_CAPABILITIES,
+	                                  NM_SETTINGS_PLUGIN_CAPABILITIES);
 }
 
 static void
-bind_device_to_connection (SCPluginIfupdown *self,
+bind_device_to_connection (SettingsPluginIfupdown *self,
                            GUdevDevice *device,
                            NMIfupdownConnection *exported)
 {
-	GByteArray *mac_address;
 	NMSettingWired *s_wired;
 	NMSettingWireless *s_wifi;
 	const char *iface, *address;
@@ -203,8 +175,7 @@ bind_device_to_connection (SCPluginIfupdown *self,
 		return;
 	}
 
-	mac_address = nm_utils_hwaddr_atoba (address, ARPHRD_ETHER);
-	if (!mac_address) {
+	if (!nm_utils_hwaddr_valid (address, ETH_ALEN)) {
 		nm_log_warn (LOGD_SETTINGS, "failed to parse MAC address '%s' for %s",
 		             address, iface);
 		return;
@@ -214,20 +185,19 @@ bind_device_to_connection (SCPluginIfupdown *self,
 	s_wifi = nm_connection_get_setting_wireless (NM_CONNECTION (exported));
 	if (s_wired) {
 		nm_log_info (LOGD_SETTINGS, "locking wired connection setting");
-		g_object_set (s_wired, NM_SETTING_WIRED_MAC_ADDRESS, mac_address, NULL);
+		g_object_set (s_wired, NM_SETTING_WIRED_MAC_ADDRESS, address, NULL);
 	} else if (s_wifi) {
 		nm_log_info (LOGD_SETTINGS, "locking wireless connection setting");
-		g_object_set (s_wifi, NM_SETTING_WIRELESS_MAC_ADDRESS, mac_address, NULL);
+		g_object_set (s_wifi, NM_SETTING_WIRELESS_MAC_ADDRESS, address, NULL);
 	}
-	g_byte_array_free (mac_address, TRUE);
 
-	nm_settings_connection_commit_changes (NM_SETTINGS_CONNECTION (exported), NULL, NULL);
+	nm_settings_connection_commit_changes (NM_SETTINGS_CONNECTION (exported), NM_SETTINGS_CONNECTION_COMMIT_REASON_NONE, NULL, NULL);
 }    
 
 static void
-udev_device_added (SCPluginIfupdown *self, GUdevDevice *device)
+udev_device_added (SettingsPluginIfupdown *self, GUdevDevice *device)
 {
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
 	const char *iface, *path;
 	NMIfupdownConnection *exported;
 
@@ -254,13 +224,13 @@ udev_device_added (SCPluginIfupdown *self, GUdevDevice *device)
 		bind_device_to_connection (self, device, exported);
 
 	if (ALWAYS_UNMANAGE || priv->unmanage_well_known)
-		g_signal_emit_by_name (G_OBJECT (self), NM_SYSTEM_CONFIG_INTERFACE_UNMANAGED_SPECS_CHANGED);
+		g_signal_emit_by_name (G_OBJECT (self), NM_SETTINGS_PLUGIN_UNMANAGED_SPECS_CHANGED);
 }
 
 static void
-udev_device_removed (SCPluginIfupdown *self, GUdevDevice *device)
+udev_device_removed (SettingsPluginIfupdown *self, GUdevDevice *device)
 {
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
 	const char *iface, *path;
 
 	iface = g_udev_device_get_name (device);
@@ -274,13 +244,13 @@ udev_device_removed (SCPluginIfupdown *self, GUdevDevice *device)
 		return;
 
 	if (ALWAYS_UNMANAGE || priv->unmanage_well_known)
-		g_signal_emit_by_name (G_OBJECT (self), NM_SYSTEM_CONFIG_INTERFACE_UNMANAGED_SPECS_CHANGED);
+		g_signal_emit_by_name (G_OBJECT (self), NM_SETTINGS_PLUGIN_UNMANAGED_SPECS_CHANGED);
 }
 
 static void
-udev_device_changed (SCPluginIfupdown *self, GUdevDevice *device)
+udev_device_changed (SettingsPluginIfupdown *self, GUdevDevice *device)
 {
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
 	const char *iface, *path;
 
 	iface = g_udev_device_get_name (device);
@@ -294,7 +264,7 @@ udev_device_changed (SCPluginIfupdown *self, GUdevDevice *device)
 		return;
 
 	if (ALWAYS_UNMANAGE || priv->unmanage_well_known)
-		g_signal_emit_by_name (G_OBJECT (self), NM_SYSTEM_CONFIG_INTERFACE_UNMANAGED_SPECS_CHANGED);
+		g_signal_emit_by_name (G_OBJECT (self), NM_SETTINGS_PLUGIN_UNMANAGED_SPECS_CHANGED);
 }
 
 static void
@@ -303,7 +273,7 @@ handle_uevent (GUdevClient *client,
                GUdevDevice *device,
                gpointer user_data)
 {
-	SCPluginIfupdown *self = SC_PLUGIN_IFUPDOWN (user_data);
+	SettingsPluginIfupdown *self = SETTINGS_PLUGIN_IFUPDOWN (user_data);
 	const char *subsys;
 
 	g_return_if_fail (action != NULL);
@@ -322,15 +292,12 @@ handle_uevent (GUdevClient *client,
 }
 
 static void
-SCPluginIfupdown_init (NMSystemConfigInterface *config)
+init (NMSettingsPlugin *config)
 {
-	SCPluginIfupdown *self = SC_PLUGIN_IFUPDOWN (config);
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
+	SettingsPluginIfupdown *self = SETTINGS_PLUGIN_IFUPDOWN (config);
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (self);
 	GHashTable *auto_ifaces;
 	if_block *block = NULL;
-	NMInotifyHelper *inotify_helper;
-	char *value;
-	GError *error = NULL;
 	GList *keys, *iter;
 	GHashTableIter con_iter;
 	const char *block_name;
@@ -355,19 +322,6 @@ SCPluginIfupdown_init (NMSystemConfigInterface *config)
 		nm_log_warn (LOGD_SETTINGS, "    error initializing libgudev");
 	} else
 		g_signal_connect (priv->client, "uevent", G_CALLBACK (handle_uevent), self);
-
-	priv->unmanage_well_known = IFUPDOWN_UNMANAGE_WELL_KNOWN_DEFAULT;
- 
-	inotify_helper = nm_inotify_helper_get ();
-	priv->inotify_event_id = g_signal_connect (inotify_helper,
-	                                           "event",
-	                                           G_CALLBACK (update_system_hostname),
-	                                           config);
-
-	priv->inotify_system_hostname_wd =
-		nm_inotify_helper_add_watch (inotify_helper, IFUPDOWN_SYSTEM_HOSTNAME_FILE);
-
-	update_system_hostname (inotify_helper, NULL, NULL, config);
 
 	/* Read in all the interfaces */
 	ifparser_init (ENI_INTERFACES_FILE, 0);
@@ -458,21 +412,10 @@ SCPluginIfupdown_init (NMSystemConfigInterface *config)
 	g_hash_table_destroy (auto_ifaces);
 
 	/* Check the config file to find out whether to manage interfaces */
-	value = nm_config_get_value (nm_config_get (),
-	                             IFUPDOWN_KEY_FILE_GROUP, IFUPDOWN_KEY_FILE_KEY_MANAGED,
-	                             &error);
-	if (error) {
-		nm_log_info (LOGD_SETTINGS, "loading system config file (%s) caused error: %s",
-		             nm_config_get_path (nm_config_get ()),
-		             error->message);
-	} else {
-		gboolean manage_well_known;
-		error = NULL;
-
-		manage_well_known = !g_strcmp0 (value, "true") || !g_strcmp0 (value, "1");
-		priv->unmanage_well_known = !manage_well_known;
-		g_free (value);
-	}
+	priv->unmanage_well_known = !nm_config_data_get_value_boolean (NM_CONFIG_GET_DATA_ORIG,
+	                                                               NM_CONFIG_KEYFILE_GROUP_IFUPDOWN,
+	                                                               NM_CONFIG_KEYFILE_KEY_IFUPDOWN_MANAGED,
+	                                                               !IFUPDOWN_UNMANAGE_WELL_KNOWN_DEFAULT);
 	nm_log_info (LOGD_SETTINGS, "management mode: %s", priv->unmanage_well_known ? "unmanaged" : "managed");
 
 	/* Add well-known interfaces */
@@ -490,7 +433,7 @@ SCPluginIfupdown_init (NMSystemConfigInterface *config)
 
 		for (cl_iter = con_list; cl_iter; cl_iter = g_list_next (cl_iter)) {
 			g_signal_emit_by_name (self,
-			                       NM_SYSTEM_CONFIG_INTERFACE_CONNECTION_ADDED,
+			                       NM_SETTINGS_PLUGIN_CONNECTION_ADDED,
 			                       NM_SETTINGS_CONNECTION (cl_iter->data));
 		}
 		g_list_free (con_list);
@@ -504,12 +447,10 @@ SCPluginIfupdown_init (NMSystemConfigInterface *config)
  * list is freed by the system settings service.
  */
 static GSList*
-SCPluginIfupdown_get_connections (NMSystemConfigInterface *config)
+get_connections (NMSettingsPlugin *config)
 {
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
-	GSList *connections = NULL;
-	GHashTableIter iter;
-	gpointer value;
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
+	GSList *connections;
 
 	nm_log_info (LOGD_SETTINGS, "(%d) ... get_connections.", GPOINTER_TO_UINT(config));
 
@@ -518,9 +459,7 @@ SCPluginIfupdown_get_connections (NMSystemConfigInterface *config)
 		return NULL;
 	}
 
-	g_hash_table_iter_init (&iter, priv->connections);
-	while (g_hash_table_iter_next (&iter, NULL, &value))
-		connections = g_slist_prepend (connections, value);
+	connections = _nm_utils_hash_values_to_slist (priv->connections);
 
 	nm_log_info (LOGD_SETTINGS, "(%d) connections count: %d", GPOINTER_TO_UINT(config), g_slist_length(connections));
 	return connections;
@@ -532,9 +471,9 @@ SCPluginIfupdown_get_connections (NMSystemConfigInterface *config)
  * each element must be allocated using g_malloc() or its variants.
  */
 static GSList*
-SCPluginIfupdown_get_unmanaged_specs (NMSystemConfigInterface *config)
+get_unmanaged_specs (NMSettingsPlugin *config)
 {
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
 	GSList *specs = NULL;
 	GHashTableIter iter;
 	GUdevDevice *device;
@@ -559,102 +498,25 @@ SCPluginIfupdown_get_unmanaged_specs (NMSystemConfigInterface *config)
 	return specs;
 }
 
-
-static const char *
-get_hostname (NMSystemConfigInterface *config)
-{
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
-	return priv->hostname;
-}
-
 static void
-update_system_hostname(NMInotifyHelper *inotify_helper,
-                       struct inotify_event *evt,
-                       const char *path,
-                       NMSystemConfigInterface *config)
-{
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
-	gchar *hostname_file = NULL;
-	gsize hostname_file_len = 0;
-	GError *error = NULL;
-
-	nm_log_info (LOGD_SETTINGS, "update_system_hostname");
-
-	if (evt && evt->wd != priv->inotify_system_hostname_wd)
-		return;
-
-	if(!g_file_get_contents ( IFUPDOWN_SYSTEM_HOSTNAME_FILE,
-						 &hostname_file,
-						 &hostname_file_len,
-						 &error)) {
-		nm_log_warn (LOGD_SETTINGS, "update_system_hostname() - couldn't read "
-		             IFUPDOWN_SYSTEM_HOSTNAME_FILE " (%d/%s)",
-		             error->code, error->message);
-		return;
-	}
-
-	g_free(priv->hostname);
-	priv->hostname = g_strstrip(hostname_file);
-
-	/* We shouldn't return a zero-length hostname, but NULL */
-	if (priv->hostname && !strlen (priv->hostname)) {
-		g_free (priv->hostname);
-		priv->hostname = NULL;
-	}
-
-	g_object_notify (G_OBJECT (config), NM_SYSTEM_CONFIG_INTERFACE_HOSTNAME);
-}
-
-static void
-write_system_hostname(NMSystemConfigInterface *config,
-				  const char *newhostname)
-{
-	GError *error = NULL;
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (config);
-	nm_log_info (LOGD_SETTINGS, "write_system_hostname: %s", newhostname);
-
-	g_return_if_fail (newhostname);
-
-	if(!g_file_set_contents ( IFUPDOWN_SYSTEM_HOSTNAME_FILE,
-						 newhostname,
-						 -1,
-						 &error)) {
-		nm_log_warn (LOGD_SETTINGS, "update_system_hostname() - couldn't write hostname (%s) to "
-		             IFUPDOWN_SYSTEM_HOSTNAME_FILE " (%d/%s)",
-		             newhostname, error->code, error->message);	
-	} else {
-		priv->hostname = g_strdup (newhostname);
-	}
-	g_object_notify (G_OBJECT (config), NM_SYSTEM_CONFIG_INTERFACE_HOSTNAME);
-}
-
-
-static void
-sc_plugin_ifupdown_init (SCPluginIfupdown *plugin)
+settings_plugin_ifupdown_init (SettingsPluginIfupdown *plugin)
 {
 }
 
 static void
-GObject__get_property (GObject *object, guint prop_id,
-				   GValue *value, GParamSpec *pspec)
+get_property (GObject *object, guint prop_id,
+                       GValue *value, GParamSpec *pspec)
 {
-	NMSystemConfigInterface *self = NM_SYSTEM_CONFIG_INTERFACE (object);
-
 	switch (prop_id) {
-	case NM_SYSTEM_CONFIG_INTERFACE_PROP_NAME:
+	case NM_SETTINGS_PLUGIN_PROP_NAME:
 		g_value_set_string (value, IFUPDOWN_PLUGIN_NAME);
 		break;
-	case NM_SYSTEM_CONFIG_INTERFACE_PROP_INFO:
+	case NM_SETTINGS_PLUGIN_PROP_INFO:
 		g_value_set_string (value, IFUPDOWN_PLUGIN_INFO);
 		break;
-	case NM_SYSTEM_CONFIG_INTERFACE_PROP_CAPABILITIES:
-		g_value_set_uint (value, NM_SYSTEM_CONFIG_INTERFACE_CAP_MODIFY_HOSTNAME);
+	case NM_SETTINGS_PLUGIN_PROP_CAPABILITIES:
+		g_value_set_uint (value, NM_SETTINGS_PLUGIN_CAP_NONE);
 		break;
-	case NM_SYSTEM_CONFIG_INTERFACE_PROP_HOSTNAME:
-		{
-			g_value_set_string (value, get_hostname(self));
-			break;
-		}
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -662,19 +524,10 @@ GObject__get_property (GObject *object, guint prop_id,
 }
 
 static void
-GObject__set_property (GObject *object, guint prop_id,
+set_property (GObject *object, guint prop_id,
 				   const GValue *value, GParamSpec *pspec)
 {
 	switch (prop_id) {
-	case NM_SYSTEM_CONFIG_INTERFACE_PROP_HOSTNAME:
-		{
-			const gchar *hostname = g_value_get_string (value);
-			if (hostname && strlen (hostname) < 1)
-				hostname = NULL;
-			write_system_hostname(NM_SYSTEM_CONFIG_INTERFACE(object),
-							  hostname);
-			break;
-		}
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -682,16 +535,10 @@ GObject__set_property (GObject *object, guint prop_id,
 }
 
 static void
-GObject__dispose (GObject *object)
+dispose (GObject *object)
 {
-	SCPluginIfupdown *plugin = SC_PLUGIN_IFUPDOWN (object);
-	SCPluginIfupdownPrivate *priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (plugin);
-	NMInotifyHelper *inotify_helper = nm_inotify_helper_get ();
-
-	g_signal_handler_disconnect (inotify_helper, priv->inotify_event_id);
-
-	if (priv->inotify_system_hostname_wd >= 0)
-		nm_inotify_helper_remove_watch (inotify_helper, priv->inotify_system_hostname_wd);
+	SettingsPluginIfupdown *plugin = SETTINGS_PLUGIN_IFUPDOWN (object);
+	SettingsPluginIfupdownPrivate *priv = SETTINGS_PLUGIN_IFUPDOWN_GET_PRIVATE (plugin);
 
 	if (priv->kernel_ifaces)
 		g_hash_table_destroy(priv->kernel_ifaces);
@@ -703,21 +550,12 @@ GObject__dispose (GObject *object)
 		g_object_unref (priv->client);
 
 
-	G_OBJECT_CLASS (sc_plugin_ifupdown_parent_class)->dispose (object);
+	G_OBJECT_CLASS (settings_plugin_ifupdown_parent_class)->dispose (object);
 }
 
 G_MODULE_EXPORT GObject *
-nm_system_config_factory (void)
+nm_settings_plugin_factory (void)
 {
-	static SCPluginIfupdown *singleton = NULL;
-	SCPluginIfupdownPrivate *priv;
-
-	if (!singleton) {
-		singleton = SC_PLUGIN_IFUPDOWN (g_object_new (SC_TYPE_PLUGIN_IFUPDOWN, NULL));
-		priv = SC_PLUGIN_IFUPDOWN_GET_PRIVATE (singleton);
-	} else
-		g_object_ref (singleton);
-
-	return G_OBJECT (singleton);
+	return g_object_ref (settings_plugin_ifupdown_get ());
 }
 

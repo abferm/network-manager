@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,8 +15,8 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2008 Novell, Inc.
- * Copyright (C) 2007 - 2013 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2013 Red Hat, Inc.
  */
 
 #ifndef NM_DEVICE_H
@@ -68,6 +66,7 @@ GQuark nm_device_error_quark (void);
 #define NM_DEVICE_DRIVER_VERSION "driver-version"
 #define NM_DEVICE_FIRMWARE_VERSION "firmware-version"
 #define NM_DEVICE_CAPABILITIES "capabilities"
+#define NM_DEVICE_REAL "real"
 #define NM_DEVICE_MANAGED "managed"
 #define NM_DEVICE_AUTOCONNECT "autoconnect"
 #define NM_DEVICE_FIRMWARE_MISSING "firmware-missing"
@@ -129,6 +128,8 @@ NM_AVAILABLE_IN_0_9_10
 const char *         nm_device_get_hw_address       (NMDevice *device);
 NMDeviceCapabilities nm_device_get_capabilities     (NMDevice *device);
 gboolean             nm_device_get_managed          (NMDevice *device);
+NM_AVAILABLE_IN_1_2
+void                 nm_device_set_managed          (NMDevice *device, gboolean managed);
 gboolean             nm_device_get_autoconnect      (NMDevice *device);
 void                 nm_device_set_autoconnect      (NMDevice *device, gboolean autoconnect);
 gboolean             nm_device_get_firmware_missing (NMDevice *device);
@@ -144,6 +145,10 @@ NM_AVAILABLE_IN_0_9_10
 const char *         nm_device_get_physical_port_id (NMDevice *device);
 NM_AVAILABLE_IN_0_9_10
 guint32              nm_device_get_mtu              (NMDevice *device);
+NM_AVAILABLE_IN_1_0
+gboolean             nm_device_is_software          (NMDevice *device);
+NM_AVAILABLE_IN_1_2
+gboolean             nm_device_is_real              (NMDevice *device);
 
 const char *         nm_device_get_product           (NMDevice  *device);
 const char *         nm_device_get_vendor            (NMDevice  *device);
@@ -153,10 +158,15 @@ NM_AVAILABLE_IN_0_9_10
 char **              nm_device_disambiguate_names    (NMDevice **devices,
                                                       int        num_devices);
 
-typedef void (*NMDeviceDeactivateFn) (NMDevice *device, GError *error, gpointer user_data);
+typedef void (*NMDeviceCallbackFn) (NMDevice *device, GError *error, gpointer user_data);
 
 void                 nm_device_disconnect           (NMDevice *device,
-                                                     NMDeviceDeactivateFn callback,
+                                                     NMDeviceCallbackFn callback,
+                                                     gpointer user_data);
+
+NM_AVAILABLE_IN_1_0
+void                 nm_device_delete               (NMDevice *device,
+                                                     NMDeviceCallbackFn callback,
                                                      gpointer user_data);
 
 GSList *             nm_device_filter_connections   (NMDevice *device,
@@ -171,6 +181,10 @@ gboolean             nm_device_connection_compatible (NMDevice *device,
 
 NM_AVAILABLE_IN_0_9_10
 GType                nm_device_get_setting_type     (NMDevice *device);
+
+/* Deprecated */
+NM_DEPRECATED_IN_1_0
+typedef void (*NMDeviceDeactivateFn) (NMDevice *device, GError *error, gpointer user_data);
 
 G_END_DECLS
 

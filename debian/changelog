@@ -1,8 +1,369 @@
-network-manager (0.9.10.0-2~bpo70+1) optimus-support; urgency=medium
+network-manager (1.2.4-2) unstable; urgency=medium
 
-  * Rebuild for optimus-support.
+  * Demote isc-dhcp-client from Depends to Recommends.
+    NetworkManager will automatically fall back to the internal dhcp client if
+    dhclient is not available. (Closes: #826680)
 
- -- Alex Ferm (PetroPower) <aferm@petropower.com>  Thu, 09 Oct 2014 15:30:18 -0500
+ -- Michael Biebl <biebl@debian.org>  Wed, 10 Aug 2016 16:57:18 +0200
+
+network-manager (1.2.4-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Rebase patches.
+  * Update symbols file for libnm0.
+  * Replace /etc/resolv.conf symlink with an empty file on package removal
+    to signal other packages that NetworkManager is no longer controlling the
+    file. (Closes: #826366)
+  * Clear WiFi requested_scan if wpa_supplicant exits or goes inactive.
+    Patches cherry-picked from upstream Git.
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 09 Aug 2016 09:13:34 +0200
+
+network-manager (1.2.2-2) unstable; urgency=medium
+
+  * Let NetworkManager.service pull in network.target. This will provide a
+    proper ordering on shutdown.
+  * Enable NetworkManager-wait-online.service. This ensures that mounting of
+    network file systems works properly and SysV init scripts depending on
+    $network will be delayed until network is available (or a timeout is
+    reached).
+  * Make sure NetworkManager-wait-online.service is enabled on upgrades. We
+    need to purge the old state, otherwise i-s-h won't enable the service on
+    upgrades.
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 02 Jun 2016 19:00:45 +0200
+
+network-manager (1.2.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Rebase patches.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 11 May 2016 18:20:31 +0200
+
+network-manager (1.2.0-1) unstable; urgency=medium
+
+  [ Laurent Bigonville ]
+  * Enable SELinux support, this allows NM to properly set labels on the
+    hostname files.
+  * Enable audit support
+
+  [ Michael Biebl ]
+  * New upstream release (Closes: #822294).
+  * Rebase patches.
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 25 Apr 2016 15:09:49 +0200
+
+network-manager (1.1.94-1) unstable; urgency=medium
+
+  * New upstream release. (1.2 rc2).
+  * Rebase patches.
+  * Update debian/copyright, add new section for documentation which is
+    licensed under the GFDL.
+  * Bump Standards-Version to 3.9.8.
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 12 Apr 2016 18:08:32 +0200
+
+network-manager (1.1.93-1) unstable; urgency=medium
+
+  * New upstream release (1.2 rc1).
+  * Rebase patches.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 06 Apr 2016 00:59:50 +0200
+
+network-manager (1.1.92-1) unstable; urgency=medium
+
+  * New upstream release (1.2 beta3).
+  * Rebase patches.
+  * Set the udev directory to /lib/udev via the new --with-udev-dir= configure
+    switch.
+  * Update symbols file for libnm-util2 and libnm0.
+  * Add versioned Build-Depends on dpkg-dev (>= 1.17.14) for <!nocheck>
+    support.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 30 Mar 2016 21:31:29 +0200
+
+network-manager (1.1.91-3) unstable; urgency=medium
+
+  * Bump Build-Depends on debhelper to (>= 9.20160114) for
+    "--dbgsym-migration" support.
+
+ -- Michael Biebl <biebl@debian.org>  Sun, 13 Mar 2016 21:14:41 +0100
+
+network-manager (1.1.91-2) unstable; urgency=medium
+
+  * Skip the test suite if "nocheck" is set via DEB_BUILD_OPTIONS.
+  * Mark the Build-Depends which are required to run the test suite with
+    <!nocheck>.
+  * Use the architecture.mk Makefile snippet provided by dpkg-dev to retrieve
+    DEB_HOST_MULTIARCH.
+  * Ensure proper upgrade from network-manager-dbg to new dbgsym packages by
+    using dh_strip --dbgsym-migration.
+  * Add a hack for wext devices reporting IW_MODE_AUTO configuration mode.
+    Patch cherry-picked from upstream Git. (Closes: #817115)
+
+ -- Michael Biebl <biebl@debian.org>  Sun, 13 Mar 2016 21:03:20 +0100
+
+network-manager (1.1.91-1) unstable; urgency=medium
+
+  * New upstream release (1.2 beta2).
+  * Rebase patches.
+  * Update symbols file for libnm0.
+  * Ship /etc/NetworkManager/dnsmasq.d/ directory which can be used to extend
+    the dnsmasq local caching nameserver config.
+  * Ship /etc/NetworkManager/dnsmasq-shared.d/ directory which can be used to
+    extend the dnsmasq configuration for shared connections.
+  * Fix bashism in tools/run-test-dbus-session.sh.
+  * Dump the contents of test-suite.log to stdout when the test suite fails.
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 01 Mar 2016 20:42:24 +0100
+
+network-manager (1.1.90-6) unstable; urgency=medium
+
+  * Fix NMSettingVxlan ageing and limit max values to be G_MAXUINT32.
+    Patch cherry-picked from upstream Git. (Closes: #813739)
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 11 Feb 2016 02:51:20 +0100
+
+network-manager (1.1.90-5) unstable; urgency=medium
+
+  * Clean up error paths in dns-manager.
+    Specifically for resolvconf, if the write succeeded, but the pclose()
+    failed, error would be left NULL and SR_ERROR would be returned, which
+    caused a crash in nm_dns_manager_end_updates().
+    Patch cherry-picked from upstream Git. (Closes: #813803)
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 05 Feb 2016 20:12:47 +0100
+
+network-manager (1.1.90-4) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Drop dbg package now that we have automatic dbgsym packages.
+  * Bump Standards-Version to 3.9.7.
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 04 Feb 2016 05:54:47 +0100
+
+network-manager (1.1.90-3) experimental; urgency=medium
+
+  * Add chroot capability to systemd service file. Needed for running openvpn.
+    Patch cherry-picked from upstream Git.
+  * Use bash when running the tests for nm_utils_kill_child. The trap handling
+    in dash seems to have issues, see #390433.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 27 Jan 2016 22:25:51 +0100
+
+network-manager (1.1.90-2) experimental; urgency=medium
+
+  * Update debian/copyright.
+  * Clean up obsolete /etc/dbus-1/system.d/nm-avahi-autoipd.conf conffile on
+    upgrades.
+  * Use dbus-run-session instead of dbus-launch within the test suite.
+  * Run test suite during build. This requires a build dependency on
+    python-gi, python-dbus and dbus (for dbus-run-session).
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 21 Jan 2016 23:23:46 +0100
+
+network-manager (1.1.90-1) experimental; urgency=medium
+
+  * New upstream release (1.2 beta1).
+  * Explicitly enable nmcli.
+  * Set the path to the dnssec-trigger-script via the configure switch.
+  * Rebase patches.
+  * Drop dependency on avahi-autoipd. Native IPv4 link-local addressing
+    configuration based on systemd network library is now used instead.
+  * Restore export of nm_vpn_plugin_old_* symbols. Patch cherry-picked from
+    upstream Git.
+  * Update symbols files for libnm-glib4, libnm-util2 and libnm0.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 20 Jan 2016 21:56:36 +0100
+
+network-manager (1.0.10-2) unstable; urgency=medium
+
+  * Fix failure to configure routes due to wrong device-route for IPv4
+    peer-addresses. Patch cherry-picked from upstream Git. (Closes: #809195)
+  * Switch from user-mode PPPoE client back to kernel-mode PPPoE.
+    We switched to rp-pppoe some time ago to workaround a bug in detecting
+    disconnects which has seen been fixed in the kernel and could be worked
+    around fairly simply with the right configuration.
+    In addition, the kernel mode PPPoE implementation is faster and provides
+    more features. (Closes: #783525)
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 20 Jan 2016 16:16:13 +0100
+
+network-manager (1.0.10-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Bump Build-Depend on libsoup2.4-dev to (>= 2.40) as per configure.ac.
+  * Rebase patches.
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 24 Dec 2015 00:43:55 +0100
+
+network-manager (1.0.8-2) unstable; urgency=medium
+
+  [ Chris Boot ]
+  * Use dh_ppp to generate Breaks for ppp and find the path to the plugin
+    directory. (Closes: #805565)
+
+ -- Michael Biebl <biebl@debian.org>  Sat, 05 Dec 2015 22:07:15 +0100
+
+network-manager (1.0.8-1) unstable; urgency=medium
+
+  * New upstream release.
+    - MTU indicated by a VPN gateway is now properly applied.
+      (Closes: #794237)
+  * Rebase patches.
+  * Install new nm-versions-macros.h header file.
+  * Check errors of polkit_unix_session_new_for_process_sync(). Patch
+    cherry-picked from upstream Git.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 25 Nov 2015 14:32:35 +0100
+
+network-manager (1.0.6-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Refresh patches.
+  * Update symbols file for libnm0 and libnm-glib4.
+  * Drop debian/patches/Mark-virtual-ethernet-interfaces-as-unmanaged.patch,
+    this patch is obsolete, since upstream provides a udev rules based
+    mechanism now to mark virtual interfaces as unmanaged. (Closes: #794083)
+  * Use GnuTLS crypto API instead of gcrypt. Patch cherry-picked from upstream
+    Git. (Closes: #748675)
+  * Fix command line parsing in nmcli. Patch cherry-picked from upstream Git.
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 28 Aug 2015 17:01:26 +0200
+
+network-manager (1.0.4-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Refresh patches.
+  * Update symbols file for libnm0.
+  * Drop obsolete Breaks from pre-wheezy.
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 30 Jul 2015 00:20:10 +0200
+
+network-manager (1.0.2-2) unstable; urgency=medium
+
+  * Fix fallback paths when writing resolv.conf. (Closes: #784587)
+
+ -- Michael Biebl <biebl@debian.org>  Thu, 07 May 2015 03:48:34 +0200
+
+network-manager (1.0.2-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Make no-patch-numbers the default for gbp pq to avoid unnecessary noise.
+  * Rebase patches.
+  * Enable and install the ibft plugin. This plugin queries the 'iscsiadm'
+    tool and generates connections based on the firmware configuration.
+  * Fix path to the iscsiadm binary in the ibft plugin.
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 06 May 2015 18:20:12 +0200
+
+network-manager (1.0.0-5) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 27 Apr 2015 15:27:39 +0200
+
+network-manager (1.0.0-4) experimental; urgency=medium
+
+  * Merge changes from master branch.
+  * Bump version check in preinst for the cleanup routine to match the
+    experimental version.
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 31 Mar 2015 07:45:38 +0200
+
+network-manager (1.0.0-3) experimental; urgency=medium
+
+  * Add strictly versioned Depends on libnm0 to libnm-dev.
+  * Detect at runtime whether to start ModemManager. (Closes: #770871)
+  * Don't install nm-settings-ifcfg-rh.5 man page.
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 09 Feb 2015 01:58:39 +0100
+
+network-manager (1.0.0-2) experimental; urgency=medium
+
+  * Enable Bluez5 DUN support.
+  * Enable polkit agent support for the CLI tools.
+  * Update Vcs-Browser URL to use cgit and https.
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 02 Feb 2015 13:51:31 +0100
+
+network-manager (1.0.0-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Rebase patches.
+  * Update symbols files for libnm-glib and libnm-util.
+  * Add perl and libyaml-perl to Build-Depends, required to build the
+    documentation.
+  * Add libnm0 and libnm-dev packages for libnm, a new GObject-based client
+    library for NetworkManager which is supposed to replace libnm-util and
+    libnm-glib.
+  * Fix incorrect dependencies in libnm.pc.
+  * Bump Standards-Version to 3.9.6. No further changes.
+
+ -- Michael Biebl <biebl@debian.org>  Fri, 23 Jan 2015 21:26:50 +0100
+
+network-manager (0.9.10.0-7) unstable; urgency=medium
+
+  * Don't make NetworkManager D-Bus activatable. If the daemon has been
+    stopped manually, we don't want it to be autostarted by client requests.
+    (Closes: #760998)
+  * Don't block network.target on NetworkManager-wait-online.service. While at
+    it, add a few other minor fixes like the addition of Documentation or
+    RemainAfterExit=yes.
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 31 Mar 2015 07:06:07 +0200
+
+network-manager (0.9.10.0-6) unstable; urgency=medium
+
+  * Detect at runtime whether to start ModemManager. When not running under
+    systemd, start ModemManager via dbus activation. (Closes: #770871)
+  * Do not assert when a device is enslaved externally. Fixes crash when
+    running something like 'brctl addif br0 eth0'. (Closes: #773216)
+
+ -- Michael Biebl <biebl@debian.org>  Mon, 09 Feb 2015 02:29:46 +0100
+
+network-manager (0.9.10.0-5) unstable; urgency=medium
+
+  * Cherry-pick upstream commit which prevents breaking PtP TUN interfaces by
+    not overriding external route metrics. (Closes: #767002)
+  * Cherry-pick upstream commit which tells systemd to restart NetworkManager
+    if it exits with a failure. (Closes: #773213)
+
+ -- Michael Biebl <biebl@debian.org>  Wed, 31 Dec 2014 01:10:08 +0100
+
+network-manager (0.9.10.0-4) unstable; urgency=medium
+
+  * Team upload.
+  * Fix arping path and add iputils-arping to the Recommends (Closes:#755039)
+  * Add d/p/0013-fix-dhclient-abnormal-exit-due-to-SIGPIPE.patch,
+    d/p/0014-log-DHCLIENT-exit-status-better.patch: Prevent dhclient to crash
+    when journald is restarted (Closes: #756144)
+
+ -- Laurent Bigonville <bigon@debian.org>  Sat, 13 Dec 2014 16:51:45 +0100
+
+network-manager (0.9.10.0-3) unstable; urgency=medium
+
+  [ Arto Jantunen ]
+  * Use the correct path when calling dnssec-trigger-script. (Closes: #763023)
+
+  [ Michael Biebl ]
+  * Acknowledge NMU, thanks Micah Anderson.
+  * Install typelib files into multiarch paths now that gobject-introspection
+    supports multiarch.
+  * Mark gir and dev packages as Multi-Arch: same.
+  * Build against libsystemd-dev.
+  * Cherry-pick upstream commits to make nmtui-edit properly save and display
+    passwords. (Closes: #754382)
+
+ -- Michael Biebl <biebl@debian.org>  Tue, 30 Sep 2014 06:12:19 +0200
+
+network-manager (0.9.10.0-2.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Cherry-pick upstream commit to fix checks for default routes (Closes:
+    #761114)
+
+ -- Micah Anderson <micah@debian.org>  Wed, 17 Sep 2014 10:06:10 -0400
 
 network-manager (0.9.10.0-2) unstable; urgency=medium
 

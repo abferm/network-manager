@@ -31,7 +31,7 @@
 #ifndef _SHVAR_H
 #define _SHVAR_H
 
-#include <glib.h>
+#include "nm-default.h"
 
 G_BEGIN_DECLS
 
@@ -56,12 +56,17 @@ shvarFile *svOpenFile (const char *name, GError **error);
  * be freed by the caller.
  */
 char *svGetValue (shvarFile *s, const char *key, gboolean verbatim);
+char *svGetValueFull (shvarFile *s, const char *key, gboolean verbatim);
+
+gint svParseBoolean (const char *value, gint def);
 
 /* return TRUE if <key> resolves to any truth value (e.g. "yes", "y", "true")
  * return FALSE if <key> resolves to any non-truth value (e.g. "no", "n", "false")
  * return <def> otherwise
  */
-gboolean svTrueValue (shvarFile *s, const char *key, gboolean def);
+gint svGetValueBoolean (shvarFile *s, const char *key, gint def);
+
+gint64 svGetValueInt64 (shvarFile *s, const char *key, guint base, gint64 min, gint64 max, gint64 fallback);
 
 /* Set the variable <key> equal to the value <value>.
  * If <key> does not exist, and the <current> pointer is set, append
@@ -69,6 +74,8 @@ gboolean svTrueValue (shvarFile *s, const char *key, gboolean def);
  * to the top of the file.
  */
 void svSetValue (shvarFile *s, const char *key, const char *value, gboolean verbatim);
+void svSetValueFull (shvarFile *s, const char *key, const char *value, gboolean verbatim);
+void svSetValueInt64 (shvarFile *s, const char *key, gint64 value);
 
 
 /* Write the current contents iff modified.  Returns FALSE on error
@@ -82,8 +89,8 @@ gboolean svWriteFile (shvarFile *s, int mode, GError **error);
 /* Close the file descriptor (if open) and free the shvarFile. */
 void svCloseFile (shvarFile *s);
 
-/* Return a new escaped string */
-char *svEscape (const char *s);
+/* Return @s unmodified or an escaped string */
+const char *svEscape (const char *s, char **to_free);
 
 /* Unescape a string in-place */
 void svUnescape (char *s);

@@ -30,30 +30,13 @@ CFILE_GLOB=$(top_srcdir)/libnm-glib/*.c
 
 # Header files to ignore when scanning.
 IGNORE_HFILES= \
+	common.h \
+	nm-dbus-helpers-private.h \
 	nm-device-private.h \
 	nm-object-cache.h \
 	nm-object-private.h \
 	nm-remote-connection-private.h \
 	nm-types-private.h \
-	nm-access-point-bindings.h \
-	nm-active-connection-bindings.h \
-	nm-client-bindings.h \
-	nm-device-bindings.h \
-	nm-device-bt-bindings.h \
-	nm-device-ethernet-bindings.h \
-	nm-device-wifi-bindings.h \
-	nm-device-modem-bindings.h \
-	nm-device-wimax-bindings.h \
-	nm-dhcp4-config-bindings.h \
-	nm-dhcp6-config-bindings.h \
-	nm-settings-connection-glue.h \
-	nm-ip4-config-bindings.h \
-	nm-ip6-config-bindings.h \
-	nm-settings-bindings.h \
-	nm-settings-glue.h \
-	nm-settings-connection-bindings.h \
-	nm-secret-agent-bindings.h \
-	nm-vpn-connection-bindings.h \
 	nm-secret-agent-glue.h \
 	nm-vpn-plugin-glue.h
 
@@ -70,13 +53,14 @@ extra_files = libnm-glib.png
 # CFLAGS and LDFLAGS for compiling scan program. Only needed
 # if $(DOC_MODULE).types is non-empty.
 GTKDOC_CFLAGS =				\
-	-I$(top_srcdir)/include		\
-	-I$(top_builddir)/include	\
+	-I$(top_srcdir)/shared	\
+	-I$(top_builddir)/shared \
 	-I$(top_srcdir)/libnm-util	\
 	-I$(top_builddir)/libnm-util	\
 	-I$(top_srcdir)/libnm-glib	\
 	-I$(top_builddir)/libnm-glib	\
 	-DNM_VERSION_MAX_ALLOWED=NM_VERSION_NEXT_STABLE \
+	-DNM_VERSION_MIN_REQUIRED=NM_VERSION_0_9_8 \
 	$(GLIB_CFLAGS)			\
 	$(DBUS_CFLAGS)
 

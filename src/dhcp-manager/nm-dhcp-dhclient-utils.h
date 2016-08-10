@@ -16,22 +16,23 @@
  * Copyright (C) 2010 Red Hat, Inc.
  */
 
-#ifndef NM_DHCP_DHCLIENT_UTILS_H
-#define NM_DHCP_DHCLIENT_UTILS_H
-
-#include <glib.h>
-#include <glib-object.h>
+#ifndef __NETWORKMANAGER_DHCP_DHCLIENT_UTILS_H__
+#define __NETWORKMANAGER_DHCP_DHCLIENT_UTILS_H__
 
 #include <nm-setting-ip4-config.h>
 #include <nm-setting-ip6-config.h>
 
+#include "nm-default.h"
+
 char *nm_dhcp_dhclient_create_config (const char *interface,
                                       gboolean is_ip6,
-                                      const char *dhcp_client_id,
-                                      GByteArray *anycast_addr,
+                                      GBytes *client_id,
+                                      const char *anycast_addr,
                                       const char *hostname,
+                                      const char *fqdn,
                                       const char *orig_path,
-                                      const char *orig_contents);
+                                      const char *orig_contents,
+                                      GBytes **out_new_client_id);
 
 char *nm_dhcp_dhclient_escape_duid (const GByteArray *duid);
 
@@ -44,9 +45,12 @@ gboolean nm_dhcp_dhclient_save_duid (const char *leasefile,
                                      GError **error);
 
 GSList *nm_dhcp_dhclient_read_lease_ip_configs (const char *iface,
+                                                int ifindex,
                                                 const char *contents,
                                                 gboolean ipv6,
                                                 GDateTime *now);
 
-#endif /* NM_DHCP_DHCLIENT_UTILS_H */
+GBytes *nm_dhcp_dhclient_get_client_id_from_config_file (const char *path);
+
+#endif /* __NETWORKMANAGER_DHCP_DHCLIENT_UTILS_H__ */
 

@@ -17,23 +17,22 @@
  *
  */
 
-#include <config.h>
+#include "nm-default.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <glib.h>
+
+#include "nm-core-internal.h"
 
 #include "nm-dns-plugin.h"
-#include "nm-logging.h"
-#include "nm-posix-signals.h"
+#include "NetworkManagerUtils.h"
 
 typedef struct {
-	gboolean disposed;
-
 	GPid pid;
-	guint32 watch_id;
+	guint watch_id;
 	char *progname;
 	char *pidfile;
 } NMDnsPluginPrivate;
@@ -49,21 +48,41 @@ enum {
 };
 static guint signals[LAST_SIGNAL] = { 0 };
 
-/********************************************/
+/******************************************************************************/
+
+#define _NMLOG_PREFIX_NAME                "dns-plugin"
+#define _NMLOG_DOMAIN                     LOGD_DNS
+#define _NMLOG(level, ...) \
+    G_STMT_START { \
+        const NMLogLevel __level = (level); \
+        \
+        if (nm_logging_enabled (__level, _NMLOG_DOMAIN)) { \
+            char __prefix[20]; \
+            const NMDnsPlugin *const __self = (self); \
+            \
+            _nm_log (__level, _NMLOG_DOMAIN, 0, \
+                     "%s%s: " _NM_UTILS_MACRO_FIRST (__VA_ARGS__), \
+                     _NMLOG_PREFIX_NAME, \
+                     (!__self \
+                        ? "" \
+                        : nm_sprintf_buf (__prefix, "[%p]", __self)) \
+                     _NM_UTILS_MACRO_REST (__VA_ARGS__)); \
+        } \
+    } G_STMT_END
+
+/******************************************************************************/
 
 gboolean
 nm_dns_plugin_update (NMDnsPlugin *self,
-                      const GSList *vpn_configs,
-                      const GSList *dev_configs,
-                      const GSList *other_configs,
+                      const NMDnsIPConfigData **configs,
+                      const NMGlobalDnsConfig *global_config,
                       const char *hostname)
 {
 	g_return_val_if_fail (NM_DNS_PLUGIN_GET_CLASS (self)->update != NULL, FALSE);
 
 	return NM_DNS_PLUGIN_GET_CLASS (self)->update (self,
-	                                               vpn_configs,
-	                                               dev_configs,
-	                                               other_configs,
+	                                               configs,
+	                                               global_config,
 	                                               hostname);
 }
 
@@ -89,36 +108,59 @@ nm_dns_plugin_get_name (NMDnsPlugin *self)
 /********************************************/
 
 static void
+_clear_pidfile (NMDnsPlugin *self)
+{
+	NMDnsPluginPrivate *priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
+
+	if (priv->pidfile) {
+		unlink (priv->pidfile);
+		g_clear_pointer (&priv->pidfile, g_free);
+	}
+}
+
+static void
 kill_existing (const char *progname, const char *pidfile, const char *kill_match)
 {
-	char *contents = NULL;
 	glong pid;
-	char *proc_path = NULL;
-	char *cmdline_contents = NULL;
+	gs_free char *contents = NULL;
+	gs_free char *cmdline_contents = NULL;
+	guint64 start_time;
+	char proc_path[256];
+	gs_free_error GError *error = NULL;
 
-	if (!g_file_get_contents (pidfile, &contents, NULL, NULL))
+	if (!pidfile)
 		return;
 
-	pid = strtol (contents, NULL, 10);
-	if (pid < 1 || pid > INT_MAX)
+	if (!kill_match)
+		g_return_if_reached ();
+
+	if (!g_file_get_contents (pidfile, &contents, NULL, &error)) {
+		if (g_error_matches (error, G_FILE_ERROR, G_FILE_ERROR_NOENT))
+			return;
+		goto out;
+	}
+
+	pid = _nm_utils_ascii_str_to_int64 (contents, 10, 2, INT_MAX, -1);
+	if (pid == -1)
 		goto out;
 
-	proc_path = g_strdup_printf ("/proc/%ld/cmdline", pid);
+	start_time = nm_utils_get_start_time_for_pid (pid, NULL, NULL);
+	if (start_time == 0)
+		goto out;
+
+	nm_sprintf_buf (proc_path, "/proc/%ld/cmdline", pid);
 	if (!g_file_get_contents (proc_path, &cmdline_contents, NULL, NULL))
 		goto out;
 
-	if (strstr (cmdline_contents, kill_match)) {
-		if (kill (pid, 0) == 0) {
-			nm_log_dbg (LOGD_DNS, "Killing stale %s child process %ld", progname, pid);
-			kill (pid, SIGKILL);
-		}
-		unlink (pidfile);
-	}
+	if (!strstr (cmdline_contents, kill_match))
+		goto out;
+
+	nm_utils_kill_process_sync (pid, start_time, SIGKILL, _NMLOG_DOMAIN,
+	                            progname ?: "<dns-process>",
+	                            0, 0, 1000);
 
 out:
-	g_free (cmdline_contents);
-	g_free (proc_path);
-	g_free (contents);
+	unlink (pidfile);
 }
 
 static void
@@ -128,24 +170,22 @@ watch_cb (GPid pid, gint status, gpointer user_data)
 	NMDnsPluginPrivate *priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
 
 	priv->pid = 0;
-	g_free (priv->progname);
-	priv->progname = NULL;
+	priv->watch_id = 0;
+	g_clear_pointer (&priv->progname, g_free);
+	_clear_pidfile (self);
 
 	g_signal_emit (self, signals[CHILD_QUIT], 0, status);
 }
 
-static void
-child_setup (gpointer user_data G_GNUC_UNUSED)
+GPid
+nm_dns_plugin_child_pid (NMDnsPlugin *self)
 {
-	/* We are in the child process at this point */
-	pid_t pid = getpid ();
-	setpgid (pid, pid);
+	NMDnsPluginPrivate *priv;
 
-	/*
-	 * We blocked signals in main(). We need to restore original signal
-	 * mask for DNS plugin here so that it can receive signals.
-	 */
-	nm_unblock_posix_signals (NULL);
+	g_return_val_if_fail (NM_IS_DNS_PLUGIN (self), 0);
+
+	priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
+	return priv->pid;
 }
 
 GPid
@@ -154,108 +194,70 @@ nm_dns_plugin_child_spawn (NMDnsPlugin *self,
                            const char *pidfile,
                            const char *kill_match)
 {
-	NMDnsPluginPrivate *priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
+	NMDnsPluginPrivate *priv;
 	GError *error = NULL;
-	char *cmdline;
+	GPid pid;
+	gs_free char *cmdline = NULL;
+	gs_free char *progname = NULL;
 
-	g_return_val_if_fail (argv != NULL, 0);
-	g_return_val_if_fail (argv[0] != NULL, 0);
+	g_return_val_if_fail (argv && argv[0], 0);
+	g_return_val_if_fail (NM_IS_DNS_PLUGIN (self), 0);
 
-	g_warn_if_fail (priv->progname == NULL);
-	g_free (priv->progname);
-	priv->progname = g_path_get_basename (argv[0]);
+	priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
 
-	if (pidfile) {
-		g_return_val_if_fail (kill_match != NULL, 0);
-		kill_existing (priv->progname, pidfile, kill_match);
+	g_return_val_if_fail (!priv->pid, 0);
+	nm_assert (!priv->progname);
+	nm_assert (!priv->watch_id);
+	nm_assert (!priv->pidfile);
 
-		g_free (priv->pidfile);
-		priv->pidfile = g_strdup (pidfile);
-	}
+	progname = g_path_get_basename (argv[0]);
+	kill_existing (progname, pidfile, kill_match);
 
-	nm_log_info (LOGD_DNS, "DNS: starting %s...", priv->progname);
-	cmdline = g_strjoinv (" ", (char **) argv);
-	nm_log_dbg (LOGD_DNS, "DNS: command line: %s", cmdline);
-	g_free (cmdline);
+	_LOGI ("starting %s...", progname);
+	_LOGD ("command line: %s",
+	       (cmdline = g_strjoinv (" ", (char **) argv)));
 
-	priv->pid = 0;
-	if (g_spawn_async (NULL, (char **) argv, NULL,
+	if (!g_spawn_async (NULL, (char **) argv, NULL,
 	                   G_SPAWN_DO_NOT_REAP_CHILD,
-	                   child_setup,
-	                   NULL, &priv->pid,
+	                   nm_utils_setpgid, NULL,
+	                   &pid,
 	                   &error)) {
-		nm_log_dbg (LOGD_DNS, "%s started with pid %d", priv->progname, priv->pid);
-		priv->watch_id = g_child_watch_add (priv->pid, (GChildWatchFunc) watch_cb, self);
-	} else {
-		nm_log_warn (LOGD_DNS, "Failed to spawn %s: (%d) %s",
-		             priv->progname, error ? error->code : -1,
-		             error && error->message ? error->message : "(unknown)");
+		_LOGW ("failed to spawn %s: %s",
+		       progname, error->message);
 		g_clear_error (&error);
+		return 0;
 	}
 
-	return priv->pid;
+	_LOGD ("%s started with pid %d", progname, pid);
+	priv->watch_id = g_child_watch_add (pid, (GChildWatchFunc) watch_cb, self);
+	priv->pid = pid;
+	priv->progname = g_steal_pointer (&progname);
+	priv->pidfile = g_strdup (pidfile);
+
+	return pid;
 }
 
-typedef struct {
-	int pid;
-	char *progname;
-} KillInfo;
-
-static gboolean
-ensure_killed (gpointer data)
-{
-	KillInfo *info = data;
-
-	if (kill (info->pid, 0) == 0)
-		kill (info->pid, SIGKILL);
-
-	/* ensure the child is reaped */
-	nm_log_dbg (LOGD_DNS, "waiting for %s pid %d to exit", info->progname, info->pid);
-	waitpid (info->pid, NULL, 0);
-	nm_log_dbg (LOGD_DNS, "dnsmasq pid %d cleaned up", info->pid);
-
-	g_free (info->progname);
-	g_free (info);
-	return FALSE;
-}
-
-gboolean nm_dns_plugin_child_kill (NMDnsPlugin *self)
+gboolean
+nm_dns_plugin_child_kill (NMDnsPlugin *self)
 {
 	NMDnsPluginPrivate *priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
 
-	if (priv->watch_id) {
-		g_source_remove (priv->watch_id);
-		priv->watch_id = 0;
-	}
-
+	nm_clear_g_source (&priv->watch_id);
 	if (priv->pid) {
-		KillInfo *info;
-
-		if (kill (priv->pid, SIGTERM) == 0) {
-			info = g_malloc0 (sizeof (KillInfo));
-			info->pid = priv->pid;
-			info->progname = g_strdup (priv->progname);
-			g_timeout_add_seconds (2, ensure_killed, info);
-		} else {
-			kill (priv->pid, SIGKILL);
-
-			/* ensure the child is reaped */
-			nm_log_dbg (LOGD_DNS, "waiting for %s pid %d to exit", priv->progname, priv->pid);
-			waitpid (priv->pid, NULL, 0);
-			nm_log_dbg (LOGD_DNS, "%s pid %d cleaned up", priv->progname, priv->pid);
-		}
+		nm_utils_kill_child_sync (priv->pid, SIGTERM, _NMLOG_DOMAIN,
+		                          priv->progname ?: "<dns-process>", NULL, 1000, 0);
 		priv->pid = 0;
-		g_free (priv->progname);
-		priv->progname = NULL;
+		g_clear_pointer (&priv->progname, g_free);
 	}
-
-	if (priv->pidfile) {
-		unlink (priv->pidfile);
-		g_free (priv->pidfile);
-		priv->pidfile = NULL;
-	}
+	_clear_pidfile (self);
 
 	return TRUE;
+}
+
+void
+nm_dns_plugin_stop (NMDnsPlugin *self)
+{
+	nm_dns_plugin_child_kill (self);
 }
 
 /********************************************/
@@ -269,27 +271,10 @@ static void
 dispose (GObject *object)
 {
 	NMDnsPlugin *self = NM_DNS_PLUGIN (object);
-	NMDnsPluginPrivate *priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
 
-	if (!priv->disposed) {
-		priv->disposed = TRUE;
-
-		nm_dns_plugin_child_kill (self);
-	}
+	nm_dns_plugin_stop (self);
 
 	G_OBJECT_CLASS (nm_dns_plugin_parent_class)->dispose (object);
-}
-
-static void
-finalize (GObject *object)
-{
-	NMDnsPlugin *self = NM_DNS_PLUGIN (object);
-	NMDnsPluginPrivate *priv = NM_DNS_PLUGIN_GET_PRIVATE (self);
-
-	g_free (priv->progname);
-	g_free (priv->pidfile);
-
-	G_OBJECT_CLASS (nm_dns_plugin_parent_class)->finalize (object);
 }
 
 static void
@@ -301,26 +286,25 @@ nm_dns_plugin_class_init (NMDnsPluginClass *plugin_class)
 
 	/* virtual methods */
 	object_class->dispose = dispose;
-	object_class->finalize = finalize;
 	plugin_class->is_caching = is_caching;
 
 	/* signals */
 	signals[FAILED] =
-		g_signal_new (NM_DNS_PLUGIN_FAILED,
-					  G_OBJECT_CLASS_TYPE (object_class),
-					  G_SIGNAL_RUN_FIRST,
-					  G_STRUCT_OFFSET (NMDnsPluginClass, failed),
-					  NULL, NULL,
-					  g_cclosure_marshal_VOID__VOID,
-					  G_TYPE_NONE, 0);
+	    g_signal_new (NM_DNS_PLUGIN_FAILED,
+	                  G_OBJECT_CLASS_TYPE (object_class),
+	                  G_SIGNAL_RUN_FIRST,
+	                  G_STRUCT_OFFSET (NMDnsPluginClass, failed),
+	                  NULL, NULL,
+	                  g_cclosure_marshal_VOID__VOID,
+	                  G_TYPE_NONE, 0);
 
 	signals[CHILD_QUIT] =
-		g_signal_new (NM_DNS_PLUGIN_CHILD_QUIT,
-					  G_OBJECT_CLASS_TYPE (object_class),
-					  G_SIGNAL_RUN_FIRST,
-					  G_STRUCT_OFFSET (NMDnsPluginClass, child_quit),
-					  NULL, NULL,
-					  g_cclosure_marshal_VOID__INT,
-					  G_TYPE_NONE, 1, G_TYPE_INT);
+	    g_signal_new (NM_DNS_PLUGIN_CHILD_QUIT,
+	                  G_OBJECT_CLASS_TYPE (object_class),
+	                  G_SIGNAL_RUN_FIRST,
+	                  G_STRUCT_OFFSET (NMDnsPluginClass, child_quit),
+	                  NULL, NULL,
+	                  g_cclosure_marshal_VOID__INT,
+	                  G_TYPE_NONE, 1, G_TYPE_INT);
 }
 

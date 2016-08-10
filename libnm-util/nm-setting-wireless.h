@@ -1,9 +1,6 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 
 /*
- * Dan Williams <dcbw@redhat.com>
- * Tambet Ingo <tambet@gmail.com>
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -19,8 +16,8 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * (C) Copyright 2007 - 2014 Red Hat, Inc.
- * (C) Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2014 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
  */
 
 #ifndef NM_SETTING_WIRELESS_H
@@ -76,6 +73,7 @@ GQuark nm_setting_wireless_error_quark (void);
 #define NM_SETTING_WIRELESS_MTU         "mtu"
 #define NM_SETTING_WIRELESS_SEEN_BSSIDS "seen-bssids"
 #define NM_SETTING_WIRELESS_HIDDEN      "hidden"
+#define NM_SETTING_WIRELESS_POWERSAVE   "powersave"
 
 /* Deprecated */
 #define NM_SETTING_WIRELESS_SEC         "security"
@@ -153,13 +151,15 @@ void              nm_setting_wireless_clear_mac_blacklist_items   (NMSettingWire
 
 guint32           nm_setting_wireless_get_mtu                (NMSettingWireless *setting);
 gboolean          nm_setting_wireless_get_hidden             (NMSettingWireless *setting);
+NM_AVAILABLE_IN_1_2
+guint32           nm_setting_wireless_get_powersave          (NMSettingWireless *setting);
 
 gboolean          nm_setting_wireless_add_seen_bssid         (NMSettingWireless *setting,
-															  const char *bssid);
+                                                              const char *bssid);
 
 guint32           nm_setting_wireless_get_num_seen_bssids    (NMSettingWireless *setting);
 const char       *nm_setting_wireless_get_seen_bssid         (NMSettingWireless *setting,
-															  guint32 i);
+                                                              guint32 i);
 
 gboolean          nm_setting_wireless_ap_security_compatible (NMSettingWireless *s_wireless,
                                                               NMSettingWirelessSecurity *s_wireless_sec,

@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,15 +15,14 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2008 Novell, Inc.
- * Copyright (C) 2007 - 2011 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2011 Red Hat, Inc.
  */
 
-#include <config.h>
+#include "nm-default.h"
+
 #include <string.h>
 #include <netinet/ether.h>
-
-#include "nm-glib-compat.h"
 
 #include <nm-connection.h>
 #include <nm-setting-connection.h>
@@ -54,6 +51,7 @@ typedef struct {
 	NM80211Mode mode;
 	guint32 max_bitrate;
 	guint8 strength;
+	gint last_seen;
 } NMAccessPointPrivate;
 
 enum {
@@ -68,6 +66,7 @@ enum {
 	PROP_MAX_BITRATE,
 	PROP_STRENGTH,
 	PROP_BSSID,
+	PROP_LAST_SEEN,
 
 	LAST_PROP
 };
@@ -88,9 +87,9 @@ nm_access_point_new (DBusGConnection *connection, const char *path)
 	g_return_val_if_fail (path != NULL, NULL);
 
 	return (GObject *) g_object_new (NM_TYPE_ACCESS_POINT,
-								    NM_OBJECT_DBUS_CONNECTION, connection,
-								    NM_OBJECT_DBUS_PATH, path,
-								    NULL);
+	                                 NM_OBJECT_DBUS_CONNECTION, connection,
+	                                 NM_OBJECT_DBUS_PATH, path,
+	                                 NULL);
 }
 
 /**
@@ -267,6 +266,27 @@ nm_access_point_get_strength (NMAccessPoint *ap)
 }
 
 /**
+ * nm_access_point_get_last_seen:
+ * @ap: a #NMAccessPoint
+ *
+ * Returns the timestamp (in CLOCK_BOOTTIME seconds) for the last time the
+ * access point was found in scan results.  A value of -1 means the access
+ * point has not been found in a scan.
+ *
+ * Returns: the last seen time in seconds
+ *
+ * Since: 1.2
+ **/
+gint
+nm_access_point_get_last_seen (NMAccessPoint *ap)
+{
+	g_return_val_if_fail (NM_IS_ACCESS_POINT (ap), -1);
+
+	_nm_object_ensure_inited (NM_OBJECT (ap));
+	return NM_ACCESS_POINT_GET_PRIVATE (ap)->last_seen;
+}
+
+/**
  * nm_access_point_connection_valid:
  * @ap: an #NMAccessPoint to validate @connection against
  * @connection: an #NMConnection to validate against @ap
@@ -377,7 +397,7 @@ nm_access_point_connection_valid (NMAccessPoint *ap, NMConnection *connection)
 /**
  * nm_access_point_filter_connections:
  * @ap: an #NMAccessPoint to filter connections for
- * @connections: (element-type NetworkManager.Connection): a list of
+ * @connections: (element-type NMConnection): a list of
  * #NMConnection objects to filter
  *
  * Filters a given list of connections for a given #NMAccessPoint object and
@@ -390,7 +410,7 @@ nm_access_point_connection_valid (NMAccessPoint *ap, NMConnection *connection)
  * for a given #NMDevice using nm_device_filter_connections() and finally
  * filter that list with this function.
  *
- * Returns: (transfer container) (element-type NetworkManager.Connection): a
+ * Returns: (transfer container) (element-type NMConnection): a
  * list of #NMConnection objects that could be activated with the given @ap.
  * The elements of the list are owned by their creator and should not be freed
  * by the caller, but the returned list itself is owned by the caller and should
@@ -417,6 +437,7 @@ nm_access_point_filter_connections (NMAccessPoint *ap, const GSList *connections
 static void
 nm_access_point_init (NMAccessPoint *ap)
 {
+	NM_ACCESS_POINT_GET_PRIVATE (ap)->last_seen = -1;
 }
 
 static void
@@ -483,6 +504,9 @@ get_property (GObject *object,
 	case PROP_STRENGTH:
 		g_value_set_uchar (value, nm_access_point_get_strength (ap));
 		break;
+	case PROP_LAST_SEEN:
+		g_value_set_int (value, nm_access_point_get_last_seen (ap));
+		break;
 	default:
 		G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
 		break;
@@ -513,6 +537,7 @@ register_properties (NMAccessPoint *ap)
 		{ NM_ACCESS_POINT_MODE,        &priv->mode },
 		{ NM_ACCESS_POINT_MAX_BITRATE, &priv->max_bitrate },
 		{ NM_ACCESS_POINT_STRENGTH,    &priv->strength },
+		{ NM_ACCESS_POINT_LAST_SEEN,   &priv->last_seen },
 		{ NULL },
 	};
 
@@ -556,13 +581,12 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_FLAGS,
-		 g_param_spec_uint (NM_ACCESS_POINT_FLAGS,
-		                    "Flags",
-		                    "Flags",
+		 g_param_spec_uint (NM_ACCESS_POINT_FLAGS, "", "",
 		                    NM_802_11_AP_FLAGS_NONE,
 		                    NM_802_11_AP_FLAGS_PRIVACY,
 		                    NM_802_11_AP_FLAGS_NONE,
-		                    G_PARAM_READABLE));
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:wpa-flags:
@@ -571,11 +595,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_WPA_FLAGS,
-		 g_param_spec_uint (NM_ACCESS_POINT_WPA_FLAGS,
-		                    "WPA Flags",
-		                    "WPA Flags",
+		 g_param_spec_uint (NM_ACCESS_POINT_WPA_FLAGS, "", "",
 		                    0, G_MAXUINT32, 0,
-		                    G_PARAM_READABLE));
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:rsn-flags:
@@ -584,11 +607,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_RSN_FLAGS,
-		 g_param_spec_uint (NM_ACCESS_POINT_RSN_FLAGS,
-		                    "RSN Flags",
-		                    "RSN Flags",
+		 g_param_spec_uint (NM_ACCESS_POINT_RSN_FLAGS, "", "",
 		                    0, G_MAXUINT32, 0,
-		                    G_PARAM_READABLE));
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:ssid:
@@ -597,11 +619,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_SSID,
-		 g_param_spec_boxed (NM_ACCESS_POINT_SSID,
-						 "SSID",
-						 "SSID",
-						 NM_TYPE_SSID,
-						 G_PARAM_READABLE));
+		 g_param_spec_boxed (NM_ACCESS_POINT_SSID, "", "",
+		                     NM_TYPE_SSID,
+		                     G_PARAM_READABLE |
+		                     G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:frequency:
@@ -610,11 +631,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_FREQUENCY,
-		 g_param_spec_uint (NM_ACCESS_POINT_FREQUENCY,
-						"Frequency",
-						"Frequency",
-						0, 10000, 0,
-						G_PARAM_READABLE));
+		 g_param_spec_uint (NM_ACCESS_POINT_FREQUENCY, "", "",
+		                    0, 10000, 0,
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:bssid:
@@ -623,11 +643,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_BSSID,
-		 g_param_spec_string (NM_ACCESS_POINT_BSSID,
-						  "BSSID",
-						  "BSSID",
-						  NULL,
-						  G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACCESS_POINT_BSSID, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:hw-address:
@@ -636,11 +655,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_HW_ADDRESS,
-		 g_param_spec_string (NM_ACCESS_POINT_HW_ADDRESS,
-						  "MAC Address",
-						  "Hardware MAC address",
-						  NULL,
-						  G_PARAM_READABLE));
+		 g_param_spec_string (NM_ACCESS_POINT_HW_ADDRESS, "", "",
+		                      NULL,
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 	
 	/**
 	 * NMAccessPoint:mode:
@@ -651,11 +669,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_MODE,
-		 g_param_spec_uint (NM_ACCESS_POINT_MODE,
-					    "Mode",
-					    "Mode",
-					    NM_802_11_MODE_ADHOC, NM_802_11_MODE_INFRA, NM_802_11_MODE_INFRA,
-					    G_PARAM_READABLE));
+		 g_param_spec_uint (NM_ACCESS_POINT_MODE, "", "",
+		                    NM_802_11_MODE_ADHOC, NM_802_11_MODE_INFRA, NM_802_11_MODE_INFRA,
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:max-bitrate:
@@ -664,11 +681,10 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_MAX_BITRATE,
-		 g_param_spec_uint (NM_ACCESS_POINT_MAX_BITRATE,
-						"Max Bitrate",
-						"Max Bitrate",
-						0, G_MAXUINT32, 0,
-						G_PARAM_READABLE));
+		 g_param_spec_uint (NM_ACCESS_POINT_MAX_BITRATE, "", "",
+		                    0, G_MAXUINT32, 0,
+		                    G_PARAM_READABLE |
+		                    G_PARAM_STATIC_STRINGS));
 
 	/**
 	 * NMAccessPoint:strength:
@@ -677,9 +693,24 @@ nm_access_point_class_init (NMAccessPointClass *ap_class)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_STRENGTH,
-		 g_param_spec_uchar (NM_ACCESS_POINT_STRENGTH,
-						"Strength",
-						"Strength",
-						0, G_MAXUINT8, 0,
-						G_PARAM_READABLE));
+		 g_param_spec_uchar (NM_ACCESS_POINT_STRENGTH, "", "",
+		                     0, G_MAXUINT8, 0,
+		                     G_PARAM_READABLE |
+		                     G_PARAM_STATIC_STRINGS));
+
+	/**
+	 * NMAccessPoint:last-seen:
+	 *
+	 * The timestamp (in CLOCK_BOOTTIME seconds) for the last time the
+	 * access point was found in scan results.  A value of -1 means the
+	 * access point has not been found in a scan.
+	 *
+	 * Since: 1.2
+	 **/
+	g_object_class_install_property
+		(object_class, PROP_LAST_SEEN,
+		 g_param_spec_int (NM_ACCESS_POINT_LAST_SEEN, "", "",
+		                   -1, G_MAXINT, -1,
+		                   G_PARAM_READABLE |
+		                   G_PARAM_STATIC_STRINGS));
 }

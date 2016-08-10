@@ -18,8 +18,8 @@
  * Copyright (C) 2012 Red Hat, Inc.
  */
 
-#ifndef NM_LINUX_PLATFORM_H
-#define NM_LINUX_PLATFORM_H
+#ifndef __NETWORKMANAGER_LINUX_PLATFORM_H__
+#define __NETWORKMANAGER_LINUX_PLATFORM_H__
 
 #include "nm-platform.h"
 
@@ -32,8 +32,12 @@
 
 /******************************************************************/
 
+struct _NMLinuxPlatformPrivate;
+
 typedef struct {
 	NMPlatform parent;
+
+	struct _NMLinuxPlatformPrivate *priv;
 } NMLinuxPlatform;
 
 typedef struct {
@@ -44,6 +48,8 @@ typedef struct {
 
 GType nm_linux_platform_get_type (void);
 
+NMPlatform *nm_linux_platform_new (gboolean netns_support);
+
 void nm_linux_platform_setup (void);
 
-#endif /* NM_LINUX_PLATFORM_H */
+#endif /* __NETWORKMANAGER_LINUX_PLATFORM_H__ */

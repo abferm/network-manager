@@ -22,10 +22,9 @@
 #ifndef _NET_PARSER_H
 #define _NET_PARSER_H
 
-#include <glib.h>
+#include "nm-default.h"
 
 #define CONF_NET_FILE SYSCONFDIR "/conf.d/net"
-#define IFNET_KEY_FILE_GROUP "ifnet"
 
 gboolean ifnet_init (gchar * config_file);
 void ifnet_destroy (void);

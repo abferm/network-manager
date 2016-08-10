@@ -13,8 +13,12 @@
  * Copyright (C) 2012 Red Hat, Inc.
  */
 
+#include "nm-default.h"
+
 #include "nm-connection-provider.h"
 #include "nm-utils.h"
+
+G_DEFINE_INTERFACE (NMConnectionProvider, nm_connection_provider, G_TYPE_OBJECT)
 
 GSList *
 nm_connection_provider_get_best_connections (NMConnectionProvider *self,
@@ -89,7 +93,7 @@ nm_connection_provider_get_connection_by_uuid (NMConnectionProvider *self,
 /*****************************************************************************/
 
 static void
-nm_connection_provider_init (gpointer g_iface)
+nm_connection_provider_default_init (NMConnectionProviderInterface *g_iface)
 {
 	GType iface_type = G_TYPE_FROM_INTERFACE (g_iface);
 	static gboolean initialized = FALSE;
@@ -102,49 +106,21 @@ nm_connection_provider_init (gpointer g_iface)
 	g_signal_new (NM_CP_SIGNAL_CONNECTION_ADDED,
 	              iface_type,
 	              G_SIGNAL_RUN_FIRST,
-	              G_STRUCT_OFFSET (NMConnectionProvider, connection_added),
-	              NULL, NULL,
+	              0, NULL, NULL,
 	              g_cclosure_marshal_VOID__OBJECT,
 	              G_TYPE_NONE, 1, G_TYPE_OBJECT);
 
 	g_signal_new (NM_CP_SIGNAL_CONNECTION_UPDATED,
 	              iface_type,
 	              G_SIGNAL_RUN_FIRST,
-	              G_STRUCT_OFFSET (NMConnectionProvider, connection_updated),
-	              NULL, NULL,
+	              0, NULL, NULL,
 	              g_cclosure_marshal_VOID__OBJECT,
 	              G_TYPE_NONE, 1, G_TYPE_OBJECT);
 
 	g_signal_new (NM_CP_SIGNAL_CONNECTION_REMOVED,
 	              iface_type,
 	              G_SIGNAL_RUN_FIRST,
-	              G_STRUCT_OFFSET (NMConnectionProvider, connection_removed),
-	              NULL, NULL,
+	              0, NULL, NULL,
 	              g_cclosure_marshal_VOID__OBJECT,
 	              G_TYPE_NONE, 1, G_TYPE_OBJECT);
-}
-
-GType
-nm_connection_provider_get_type (void)
-{
-	static GType cp_type = 0;
-
-	if (!G_UNLIKELY (cp_type)) {
-		const GTypeInfo cp_info = {
-			sizeof (NMConnectionProvider), /* class_size */
-			nm_connection_provider_init,   /* base_init */
-			NULL,       /* base_finalize */
-			NULL,
-			NULL,       /* class_finalize */
-			NULL,       /* class_data */
-			0,
-			0,          /* n_preallocs */
-			NULL
-		};
-
-		cp_type = g_type_register_static (G_TYPE_INTERFACE, "NMConnectionProvider", &cp_info, 0);
-		g_type_interface_add_prerequisite (cp_type, G_TYPE_OBJECT);
-	}
-
-	return cp_type;
 }

@@ -21,10 +21,16 @@
 #ifndef _UTILS_H_
 #define _UTILS_H_
 
-#include <glib.h>
 #include <nm-connection.h>
+#include "nm-default.h"
 #include "shvar.h"
 #include "common.h"
+
+#define NM_IFCFG_CONNECTION_LOG_PATH(path)  ((path) ?: "in-memory")
+#define NM_IFCFG_CONNECTION_LOG_FMT         "%s (%s,\"%s\")"
+#define NM_IFCFG_CONNECTION_LOG_ARG(con)    NM_IFCFG_CONNECTION_LOG_PATH (nm_settings_connection_get_filename ((NMSettingsConnection *) (con))), nm_connection_get_uuid ((NMConnection *) (con)), nm_connection_get_id ((NMConnection *) (con))
+#define NM_IFCFG_CONNECTION_LOG_FMTD        "%s (%s,\"%s\",%p)"
+#define NM_IFCFG_CONNECTION_LOG_ARGD(con)   NM_IFCFG_CONNECTION_LOG_PATH (nm_settings_connection_get_filename ((NMSettingsConnection *) (con))), nm_connection_get_uuid ((NMConnection *) (con)), nm_connection_get_id ((NMConnection *) (con)), (con)
 
 char *utils_single_quote_string (const char *str);
 
@@ -47,11 +53,13 @@ shvarFile *utils_get_route_ifcfg (const char *parent, gboolean should_create);
 shvarFile *utils_get_route6_ifcfg (const char *parent, gboolean should_create);
 
 gboolean utils_has_route_file_new_syntax (const char *filename);
+gboolean utils_has_complex_routes (const char *filename);
 
 gboolean utils_ignore_ip_config (NMConnection *connection);
 
 gboolean utils_is_ifcfg_alias_file (const char *alias, const char *ifcfg);
-char *utils_get_ifcfg_from_alias (const char *alias);
+
+char *utils_detect_ifcfg_path (const char *path, gboolean only_ifcfg);
 
 #endif  /* _UTILS_H_ */
 

@@ -18,12 +18,12 @@
  * Copyright (C) 2011 Red Hat, Inc.
  */
 
-#ifndef WIFI_UTILS_PRIVATE_H
-#define WIFI_UTILS_PRIVATE_H
+#ifndef __WIFI_UTILS_PRIVATE_H__
+#define __WIFI_UTILS_PRIVATE_H__
 
-#include <glib.h>
 
-#include "NetworkManager.h"
+#include "nm-default.h"
+#include "nm-dbus-interface.h"
 #include "wifi-utils.h"
 
 struct WifiData {
@@ -35,19 +35,19 @@ struct WifiData {
 
 	gboolean (*set_mode) (WifiData *data, const NM80211Mode mode);
 
+	/* Set power saving mode on an interface */
+	gboolean (*set_powersave) (WifiData *data, guint32 powersave);
+
 	/* Return current frequency in MHz (really associated BSS frequency) */
 	guint32 (*get_freq) (WifiData *data);
 
 	/* Return first supported frequency in the zero-terminated list */
 	guint32 (*find_freq) (WifiData *data, const guint32 *freqs);
 
-	/* If SSID is empty/blank (zero-length or all \0s) return NULL */
-	GByteArray * (*get_ssid) (WifiData *data);
-
 	/* Return current bitrate in Kbps */
 	guint32 (*get_rate) (WifiData *data);
 
-	gboolean (*get_bssid) (WifiData *data, struct ether_addr *out_bssid);
+	gboolean (*get_bssid) (WifiData *data, guint8 *out_bssid);
 
 	/* Return a signal strength percentage 0 - 100% for the current BSSID;
 	 * return -1 on errors or if not associated.
@@ -66,7 +66,7 @@ struct WifiData {
 	gboolean (*set_mesh_channel) (WifiData *data, guint32 channel);
 
 	/* ssid == NULL means "auto SSID" */
-	gboolean (*set_mesh_ssid) (WifiData *data, const GByteArray *ssid);
+	gboolean (*set_mesh_ssid) (WifiData *data, const guint8 *ssid, gsize len);
 
 	gboolean (*indicate_addressing_running) (WifiData *data, gboolean running);
 };
@@ -74,4 +74,4 @@ struct WifiData {
 gpointer wifi_data_new (const char *iface, int ifindex, gsize len);
 void wifi_data_free (WifiData *data);
 
-#endif  /* WIFI_UTILS_PRIVATE_H */
+#endif  /* __WIFI_UTILS_PRIVATE_H__ */

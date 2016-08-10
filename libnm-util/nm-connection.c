@@ -1,9 +1,6 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 
 /*
- * Dan Williams <dcbw@redhat.com>
- * Tambet Ingo <tambet@gmail.com>
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -19,14 +16,15 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * (C) Copyright 2007 - 2013 Red Hat, Inc.
- * (C) Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2013 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
  */
 
-#include <glib-object.h>
-#include <glib/gi18n.h>
+#include "nm-default.h"
+
 #include <dbus/dbus-glib.h>
 #include <string.h>
+
 #include "nm-connection.h"
 #include "nm-utils.h"
 #include "nm-dbus-glib-types.h"
@@ -122,6 +120,10 @@ enum {
 
 static guint signals[LAST_SIGNAL] = { 0 };
 
+
+static NMSettingVerifyResult _nm_connection_verify (NMConnection *connection, GError **error);
+
+
 /*************************************************************/
 
 /**
@@ -184,12 +186,23 @@ setting_changed_cb (NMSetting *setting,
 	g_signal_emit (self, signals[CHANGED], 0);
 }
 
+static gboolean
+_setting_release (gpointer key, gpointer value, gpointer user_data)
+{
+	g_signal_handlers_disconnect_by_func (user_data, setting_changed_cb, value);
+	return TRUE;
+}
+
 static void
 _nm_connection_add_setting (NMConnection *connection, NMSetting *setting)
 {
-	g_hash_table_insert (NM_CONNECTION_GET_PRIVATE (connection)->settings,
-	                     (gpointer) G_OBJECT_TYPE_NAME (setting),
-	                     setting);
+	NMConnectionPrivate *priv = NM_CONNECTION_GET_PRIVATE (connection);
+	const char *name = G_OBJECT_TYPE_NAME (setting);
+	NMSetting *s_old;
+
+	if ((s_old = g_hash_table_lookup (priv->settings, (gpointer) name)))
+		g_signal_handlers_disconnect_by_func (s_old, setting_changed_cb, connection);
+	g_hash_table_insert (priv->settings, (gpointer) name, setting);
 	/* Listen for property changes so we can emit the 'changed' signal */
 	g_signal_connect (setting, "notify", (GCallback) setting_changed_cb, connection);
 }
@@ -287,28 +300,6 @@ nm_connection_get_setting_by_name (NMConnection *connection, const char *name)
 	return type ? nm_connection_get_setting (connection, type) : NULL;
 }
 
-/* not exposed until we actually need it */
-static NMSetting *
-_get_type_setting (NMConnection *connection)
-{
-	NMSettingConnection *s_con;
-	const char *type;
-	NMSetting *base;
-
-	g_return_val_if_fail (NM_IS_CONNECTION (connection), NULL);
-
-	s_con = nm_connection_get_setting_connection (connection);
-	g_assert (s_con);
-
-	type = nm_setting_connection_get_connection_type (s_con);
-	g_assert (type);
-
-	base = nm_connection_get_setting_by_name (connection, type);
-	g_assert (base);
-
-	return base;
-}
-
 static gboolean
 validate_permissions_type (GHashTable *hash, GError **error)
 {
@@ -336,19 +327,30 @@ validate_permissions_type (GHashTable *hash, GError **error)
 	return TRUE;
 }
 
-static gboolean
-hash_to_connection (NMConnection *connection, GHashTable *new, GError **error)
+/**
+ * _nm_connection_replace_settings:
+ * @connection: a #NMConnection
+ * @new_settings: (element-type utf8 GLib.HashTable): a #GHashTable of settings
+ **/
+void
+_nm_connection_replace_settings (NMConnection *connection,
+                                 GHashTable *new_settings)
 {
+	NMConnectionPrivate *priv = NM_CONNECTION_GET_PRIVATE (connection);
 	GHashTableIter iter;
 	const char *setting_name;
 	GHashTable *setting_hash;
-	gboolean changed, valid;
-	NMConnectionPrivate *priv = NM_CONNECTION_GET_PRIVATE (connection);
+	gboolean changed;
+
+	g_return_if_fail (NM_IS_CONNECTION (connection));
+	g_return_if_fail (new_settings != NULL);
+
+	priv = NM_CONNECTION_GET_PRIVATE (connection);
 
 	if ((changed = g_hash_table_size (priv->settings) > 0))
-		g_hash_table_remove_all (priv->settings);
+		g_hash_table_foreach_remove (priv->settings, _setting_release, connection);
 
-	g_hash_table_iter_init (&iter, new);
+	g_hash_table_iter_init (&iter, new_settings);
 	while (g_hash_table_iter_next (&iter, (gpointer) &setting_name, (gpointer) &setting_hash)) {
 		GType type = nm_connection_lookup_setting_type (setting_name);
 
@@ -362,10 +364,8 @@ hash_to_connection (NMConnection *connection, GHashTable *new, GError **error)
 		}
 	}
 
-	valid = nm_connection_verify (connection, error);
 	if (changed)
 		g_signal_emit (connection, signals[CHANGED], 0);
-	return valid;
 }
 
 /**
@@ -382,16 +382,15 @@ nm_connection_replace_settings (NMConnection *connection,
                                 GHashTable *new_settings,
                                 GError **error)
 {
-	gboolean valid = FALSE;
-
 	g_return_val_if_fail (NM_IS_CONNECTION (connection), FALSE);
 	g_return_val_if_fail (new_settings != NULL, FALSE);
-	if (error)
-		g_return_val_if_fail (*error == NULL, FALSE);
+	g_return_val_if_fail (!error || !*error, FALSE);
 
-	if (validate_permissions_type (new_settings, error))
-		valid = hash_to_connection (connection, new_settings, error);
-	return valid;
+	if (!validate_permissions_type (new_settings, error))
+		return FALSE;
+
+	_nm_connection_replace_settings (connection, new_settings);
+	return nm_connection_verify (connection, error);
 }
 
 /**
@@ -403,8 +402,10 @@ nm_connection_replace_settings (NMConnection *connection,
  * Deep-copies the settings of @new_conenction and replaces the settings of @connection
  * with the copied settings.
  *
- * Returns: %TRUE if the settings were valid and added to the connection, %FALSE
- * if they were not
+ * Returns: %TRUE if the settings were valid after replacing the connection, %FALSE
+ * if they were not. Regardless of whether %TRUE or %FALSE is returned, the connection
+ * is successfully replaced. %FALSE only means, that the connection does not verify
+ * at the end of the operation.
  *
  * Since: 0.9.10
  **/
@@ -416,17 +417,17 @@ nm_connection_replace_settings_from_connection (NMConnection *connection,
 	NMConnectionPrivate *priv;
 	GHashTableIter iter;
 	NMSetting *setting;
-	gboolean changed, valid;
+	gboolean changed = FALSE;
+	gboolean valid;
 
 	g_return_val_if_fail (NM_IS_CONNECTION (connection), FALSE);
 	g_return_val_if_fail (NM_IS_CONNECTION (new_connection), FALSE);
-	if (error)
-		g_return_val_if_fail (*error == NULL, FALSE);
+	g_return_val_if_fail (!error || !*error, FALSE);
 
 	/* When 'connection' and 'new_connection' are the same object simply return
 	 * in order not to destroy 'connection' */
 	if (connection == new_connection)
-		return TRUE;
+		goto out;
 
 	/* No need to validate permissions like nm_connection_replace_settings()
 	 * since we're dealing with an NMConnection which has already done that.
@@ -434,7 +435,7 @@ nm_connection_replace_settings_from_connection (NMConnection *connection,
 
 	priv = NM_CONNECTION_GET_PRIVATE (connection);
 	if ((changed = g_hash_table_size (priv->settings) > 0))
-		g_hash_table_remove_all (priv->settings);
+		g_hash_table_foreach_remove (priv->settings, _setting_release, connection);
 
 	if (g_hash_table_size (NM_CONNECTION_GET_PRIVATE (new_connection)->settings)) {
 		g_hash_table_iter_init (&iter, NM_CONNECTION_GET_PRIVATE (new_connection)->settings);
@@ -443,6 +444,7 @@ nm_connection_replace_settings_from_connection (NMConnection *connection,
 		changed = TRUE;
 	}
 
+out:
 	valid =  nm_connection_verify (connection, error);
 	if (changed)
 		g_signal_emit (connection, signals[CHANGED], 0);
@@ -476,7 +478,7 @@ nm_connection_compare (NMConnection *a,
 
 	/* B / A: ensure settings in B that are not in A make the comparison fail */
 	if (g_hash_table_size (NM_CONNECTION_GET_PRIVATE (a)->settings) !=
-		g_hash_table_size (NM_CONNECTION_GET_PRIVATE (b)->settings))
+	    g_hash_table_size (NM_CONNECTION_GET_PRIVATE (b)->settings))
 		return FALSE;
 
 	/* A / B: ensure all settings in A match corresponding ones in B */
@@ -575,6 +577,113 @@ nm_connection_diff (NMConnection *a,
 	return *out_settings ? FALSE : TRUE;
 }
 
+static gboolean
+_normalize_virtual_iface_name (NMConnection *self)
+{
+	NMConnectionPrivate *priv = NM_CONNECTION_GET_PRIVATE (self);
+	GHashTableIter h_iter;
+	NMSetting *setting;
+	NMSettingConnection *s_con;
+	const char *interface_name;
+	char *virtual_iface_name = NULL;
+	gboolean was_modified = FALSE;
+	const char *prop_name = NULL;
+
+	/* search for settings that might need normalization of the interface name. */
+	g_hash_table_iter_init (&h_iter, priv->settings);
+	while (   !prop_name
+	       && g_hash_table_iter_next (&h_iter, NULL, (void **) &setting)) {
+		if (NM_IS_SETTING_BOND (setting))
+			prop_name = NM_SETTING_BOND_INTERFACE_NAME;
+		else if (NM_IS_SETTING_BRIDGE (setting))
+			prop_name = NM_SETTING_BRIDGE_INTERFACE_NAME;
+		else if (NM_IS_SETTING_TEAM (setting))
+			prop_name = NM_SETTING_TEAM_INTERFACE_NAME;
+		else if (NM_IS_SETTING_VLAN (setting))
+			prop_name = NM_SETTING_VLAN_INTERFACE_NAME;
+	}
+	if (!prop_name)
+		return FALSE;
+
+	s_con = nm_connection_get_setting_connection (self);
+	g_return_val_if_fail (s_con, FALSE);
+
+	interface_name = nm_setting_connection_get_interface_name (s_con);
+
+	/* read the potential virtual_iface_name from the setting. */
+	g_object_get (setting, prop_name, &virtual_iface_name, NULL);
+
+	if (g_strcmp0 (interface_name, virtual_iface_name) != 0) {
+		if (interface_name) {
+			/* interface_name is set and overwrites the virtual_iface_name. */
+			g_object_set (setting, prop_name, interface_name, NULL);
+		} else {
+			/* interface in NMSettingConnection must be set. */
+			g_object_set (s_con, NM_SETTING_CONNECTION_INTERFACE_NAME, virtual_iface_name, NULL);
+		}
+		was_modified = TRUE;
+	}
+
+	g_free (virtual_iface_name);
+
+	return was_modified;
+}
+
+static gboolean
+_normalize_ip_config (NMConnection *self, GHashTable *parameters)
+{
+	NMSettingConnection *s_con = nm_connection_get_setting_connection (self);
+	const char *default_ip4_method = NM_SETTING_IP4_CONFIG_METHOD_AUTO;
+	const char *default_ip6_method = NULL;
+	NMSettingIP4Config *s_ip4;
+	NMSettingIP6Config *s_ip6;
+	NMSetting *setting;
+
+	if (parameters)
+		default_ip6_method = g_hash_table_lookup (parameters, NM_CONNECTION_NORMALIZE_PARAM_IP6_CONFIG_METHOD);
+	if (!default_ip6_method)
+		default_ip6_method = NM_SETTING_IP6_CONFIG_METHOD_AUTO;
+
+	s_ip4 = nm_connection_get_setting_ip4_config (self);
+	s_ip6 = nm_connection_get_setting_ip6_config (self);
+
+	if (nm_setting_connection_get_master (s_con)) {
+		/* Slave connections don't have IP configuration. */
+
+		if (s_ip4)
+			nm_connection_remove_setting (self, NM_TYPE_SETTING_IP4_CONFIG);
+
+		if (s_ip6)
+			nm_connection_remove_setting (self, NM_TYPE_SETTING_IP6_CONFIG);
+
+		return s_ip4 || s_ip6;
+	} else {
+		/* Ensure all non-slave connections have IP4 and IP6 settings objects. If no
+		 * IP6 setting was specified, then assume that means IP6 config is allowed
+		 * to fail. But if no IP4 setting was specified, assume the caller was just
+		 * being lazy.
+		 */
+		if (!s_ip4) {
+			setting = nm_setting_ip4_config_new ();
+
+			g_object_set (setting,
+			              NM_SETTING_IP4_CONFIG_METHOD, default_ip4_method,
+			              NULL);
+			nm_connection_add_setting (self, setting);
+		}
+		if (!s_ip6) {
+			setting = nm_setting_ip6_config_new ();
+
+			g_object_set (setting,
+			              NM_SETTING_IP6_CONFIG_METHOD, default_ip6_method,
+			              NM_SETTING_IP6_CONFIG_MAY_FAIL, TRUE,
+			              NULL);
+			nm_connection_add_setting (self, setting);
+		}
+		return !s_ip4 || !s_ip6;
+	}
+}
+
 /**
  * nm_connection_verify:
  * @connection: the #NMConnection to verify
@@ -584,7 +693,7 @@ nm_connection_diff (NMConnection *a,
  * have allowed values, and some values are dependent on other values.  For
  * example, if a Wi-Fi connection is security enabled, the #NMSettingWireless
  * setting object's 'security' property must contain the setting name of the
- * #NMSettingWirelessSecurity object, which must also be present in the 
+ * #NMSettingWirelessSecurity object, which must also be present in the
  * connection for the connection to be valid.  As another example, the
  * #NMSettingWired object's 'mac-address' property must be a validly formatted
  * MAC address.  The returned #GError contains information about which
@@ -595,24 +704,42 @@ nm_connection_diff (NMConnection *a,
 gboolean
 nm_connection_verify (NMConnection *connection, GError **error)
 {
+	NMSettingVerifyResult result;
+
+	result = _nm_connection_verify (connection, error);
+
+	/* we treat normalizable connections as valid. */
+	if (result == NM_SETTING_VERIFY_NORMALIZABLE)
+		g_clear_error (error);
+
+	return result == NM_SETTING_VERIFY_SUCCESS || result == NM_SETTING_VERIFY_NORMALIZABLE;
+}
+
+static NMSettingVerifyResult
+_nm_connection_verify (NMConnection *connection, GError **error)
+{
 	NMConnectionPrivate *priv;
 	NMSettingConnection *s_con;
+	NMSettingIP4Config *s_ip4;
+	NMSettingIP6Config *s_ip6;
 	GHashTableIter iter;
 	gpointer value;
-	GSList *all_settings = NULL;
-	gboolean success = TRUE;
+	GSList *all_settings = NULL, *setting_i;
+	NMSettingVerifyResult success = NM_SETTING_VERIFY_ERROR;
 	NMSetting *base;
 	const char *ctype;
+	GError *normalizable_error = NULL;
+	NMSettingVerifyResult normalizable_error_type = NM_SETTING_VERIFY_SUCCESS;
 
 	if (error)
-		g_return_val_if_fail (*error == NULL, FALSE);
+		g_return_val_if_fail (*error == NULL, NM_SETTING_VERIFY_ERROR);
 
 	if (!NM_IS_CONNECTION (connection)) {
 		g_set_error_literal (error,
 		                     NM_SETTING_CONNECTION_ERROR,
 		                     NM_SETTING_CONNECTION_ERROR_UNKNOWN,
 		                     "invalid connection; failed verification");
-		g_return_val_if_fail (NM_IS_CONNECTION (connection), FALSE);
+		g_return_val_if_fail (NM_IS_CONNECTION (connection), NM_SETTING_VERIFY_ERROR);
 	}
 
 	priv = NM_CONNECTION_GET_PRIVATE (connection);
@@ -624,22 +751,61 @@ nm_connection_verify (NMConnection *connection, GError **error)
 		                     NM_CONNECTION_ERROR,
 		                     NM_CONNECTION_ERROR_CONNECTION_SETTING_NOT_FOUND,
 		                     "connection setting not found");
-		return FALSE;
+		goto EXIT;
 	}
 
 	/* Build up the list of settings */
 	g_hash_table_iter_init (&iter, priv->settings);
-	while (g_hash_table_iter_next (&iter, NULL, &value))
-		all_settings = g_slist_append (all_settings, value);
+	while (g_hash_table_iter_next (&iter, NULL, &value)) {
+		/* Order NMSettingConnection so that it will be verified first.
+		 * The reason is, that NMSettingConnection:verify() modifies the connection
+		 * by setting NMSettingConnection:interface_name. So we want to call that
+		 * verify() first, because the order can affect the outcome.
+		 * Another reason is, that errors in this setting might be more fundamental
+		 * and should be checked and reported with higher priority.
+		 * Another reason is, that some settings look especially at the
+		 * NMSettingConnection, so they find it first in the all_settings list. */
+		if (value == s_con)
+			all_settings = g_slist_append (all_settings, value);
+		else
+			all_settings = g_slist_prepend (all_settings, value);
+	}
+	all_settings = g_slist_reverse (all_settings);
 
 	/* Now, run the verify function of each setting */
-	g_hash_table_iter_init (&iter, priv->settings);
-	while (g_hash_table_iter_next (&iter, NULL, &value) && success)
-		success = nm_setting_verify (NM_SETTING (value), all_settings, error);
-	g_slist_free (all_settings);
+	for (setting_i = all_settings; setting_i; setting_i = setting_i->next) {
+		GError *verify_error = NULL;
+		NMSettingVerifyResult verify_result;
 
-	if (success == FALSE)
-		return FALSE;
+		/* verify all settings. We stop if we find the first non-normalizable
+		 * @NM_SETTING_VERIFY_ERROR. If we find normalizable errors we continue
+		 * but remember the error to return it to the user.
+		 * @NM_SETTING_VERIFY_NORMALIZABLE_ERROR has a higher priority then
+		 * @NM_SETTING_VERIFY_NORMALIZABLE, so, if we encounter such an error type,
+		 * we remember it instead (to return it as output).
+		 **/
+		verify_result = _nm_setting_verify (NM_SETTING (setting_i->data), all_settings, &verify_error);
+		if (verify_result == NM_SETTING_VERIFY_NORMALIZABLE ||
+		    verify_result == NM_SETTING_VERIFY_NORMALIZABLE_ERROR) {
+			if (   verify_result == NM_SETTING_VERIFY_NORMALIZABLE_ERROR
+			    && normalizable_error_type == NM_SETTING_VERIFY_NORMALIZABLE) {
+				/* NORMALIZABLE_ERROR has higher priority. */
+				g_clear_error (&normalizable_error);
+			}
+			if (!normalizable_error) {
+				g_propagate_error (&normalizable_error, verify_error);
+				verify_error = NULL;
+				normalizable_error_type = verify_result;
+			}
+		} else if (verify_result != NM_SETTING_VERIFY_SUCCESS) {
+			g_propagate_error (error, verify_error);
+			g_slist_free (all_settings);
+			g_return_val_if_fail (verify_result == NM_SETTING_VERIFY_ERROR, success);
+			goto EXIT;
+		}
+		g_clear_error (&verify_error);
+	}
+	g_slist_free (all_settings);
 
 	/* Now make sure the given 'type' setting can actually be the base setting
 	 * of the connection.  Can't have type=ppp for example.
@@ -650,7 +816,7 @@ nm_connection_verify (NMConnection *connection, GError **error)
 		                     NM_CONNECTION_ERROR,
 		                     NM_CONNECTION_ERROR_CONNECTION_TYPE_INVALID,
 		                     "connection type missing");
-		return FALSE;
+		goto EXIT;
 	}
 
 	base = nm_connection_get_setting_by_name (connection, ctype);
@@ -659,19 +825,125 @@ nm_connection_verify (NMConnection *connection, GError **error)
 		                     NM_CONNECTION_ERROR,
 		                     NM_CONNECTION_ERROR_CONNECTION_TYPE_INVALID,
 		                     "base setting GType not found");
-		return FALSE;
+		goto EXIT;
 	}
 
 	if (!_nm_setting_is_base_type (base)) {
 		g_set_error (error,
-			         NM_CONNECTION_ERROR,
-			         NM_CONNECTION_ERROR_CONNECTION_TYPE_INVALID,
-			         "connection type '%s' is not a base type",
-			         ctype);
-		return FALSE;
+		             NM_CONNECTION_ERROR,
+		             NM_CONNECTION_ERROR_CONNECTION_TYPE_INVALID,
+		             "connection type '%s' is not a base type",
+		             ctype);
+		goto EXIT;
 	}
 
-	return TRUE;
+	s_ip4 = nm_connection_get_setting_ip4_config (connection);
+	s_ip6 = nm_connection_get_setting_ip6_config (connection);
+
+	if (nm_setting_connection_get_master (s_con)) {
+		if ((normalizable_error_type == NM_SETTING_VERIFY_SUCCESS ||
+		    (normalizable_error_type == NM_SETTING_VERIFY_NORMALIZABLE))  && (s_ip4 || s_ip6)) {
+			g_clear_error (&normalizable_error);
+			g_set_error (&normalizable_error,
+			             NM_CONNECTION_ERROR,
+			             NM_CONNECTION_ERROR_INVALID_SETTING,
+			             "slave connection cannot have an IP%c setting",
+			             s_ip4 ? '4' : '6');
+			/* having a slave with IP config *was* and is a verify() error. */
+			normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE_ERROR;
+		}
+	} else {
+		if (normalizable_error_type == NM_SETTING_VERIFY_SUCCESS && (!s_ip4 || !s_ip6)) {
+			g_set_error (&normalizable_error,
+			             NM_CONNECTION_ERROR,
+			             NM_CONNECTION_ERROR_SETTING_NOT_FOUND,
+			             "connection needs an IP%c setting",
+			             !s_ip4 ? '4' : '6');
+			/* having a master without IP config was not a verify() error, accept
+			 * it for backward compatibility. */
+			normalizable_error_type = NM_SETTING_VERIFY_NORMALIZABLE;
+		}
+	}
+
+	if (normalizable_error_type != NM_SETTING_VERIFY_SUCCESS) {
+		g_propagate_error (error, normalizable_error);
+		normalizable_error = NULL;
+		success = normalizable_error_type;
+	} else
+		success = NM_SETTING_VERIFY_SUCCESS;
+
+EXIT:
+	g_clear_error (&normalizable_error);
+	return success;
+}
+
+/**
+ * nm_connection_normalize:
+ * @connection: the #NMConnection to normalize
+ * @parameters: (allow-none) (element-type utf8 gpointer): a #GHashTable with
+ * normalization parameters to allow customization of the normalization by providing
+ * specific arguments. Unknown arguments will be ignored and the default will be
+ * used. The keys must be strings, hashed by g_str_hash() and g_str_equal() functions.
+ * The values are opaque and depend on the parameter name.
+ * @modified: (out) (allow-none): outputs whether any settings were modified.
+ * @error: location to store error, or %NULL. Contains the reason,
+ * why the connection is invalid, if the function returns an error.
+ *
+ * Does some basic normalization and fixup of well known inconsistencies
+ * and deprecated fields. If the connection was modified in any way,
+ * the output parameter @modified is set %TRUE.
+ *
+ * Finally the connection will be verified and %TRUE returns if the connection
+ * is valid. As this function only performs some specific normalization steps
+ * it cannot repair all connections. If the connection has errors that
+ * cannot be normalized, the connection will not be modified.
+ *
+ * Returns: %TRUE if the connection is valid, %FALSE if it is not
+ *
+ * Since: 1.0
+ **/
+gboolean
+nm_connection_normalize (NMConnection *connection,
+                         GHashTable *parameters,
+                         gboolean *modified,
+                         GError **error)
+{
+	NMSettingVerifyResult success;
+	gboolean was_modified = FALSE;
+	GError *normalizable_error = NULL;
+
+	success = _nm_connection_verify (connection, &normalizable_error);
+
+	if (success == NM_SETTING_VERIFY_ERROR ||
+	    success == NM_SETTING_VERIFY_SUCCESS) {
+		if (normalizable_error)
+			g_propagate_error (error, normalizable_error);
+		goto EXIT;
+	}
+	g_assert (success == NM_SETTING_VERIFY_NORMALIZABLE || success == NM_SETTING_VERIFY_NORMALIZABLE_ERROR);
+	g_clear_error (&normalizable_error);
+
+	/* Try to perform all kind of normalizations on the settings to fix it.
+	 * We only do this, after verifying that the connection contains no un-normalizable
+	 * errors, because in that case we rather fail without touching the settings. */
+
+	was_modified |= _normalize_virtual_iface_name (connection);
+	was_modified |= _normalize_ip_config (connection, parameters);
+
+	/* Verify anew. */
+	success = _nm_connection_verify (connection, error);
+
+	/* we would expect, that after normalization, the connection can be verified. */
+	g_return_val_if_fail (success == NM_SETTING_VERIFY_SUCCESS, success);
+
+	/* we would expect, that the connection was modified during normalization. */
+	g_return_val_if_fail (was_modified, success);
+
+EXIT:
+	if (modified)
+		*modified = was_modified;
+
+	return success == NM_SETTING_VERIFY_SUCCESS;
 }
 
 /**
@@ -751,8 +1023,8 @@ nm_connection_update_secrets (NMConnection *connection,
 
 		g_signal_handlers_block_by_func (setting, (GCallback) setting_changed_cb, connection);
 		success_detail = _nm_setting_update_secrets (setting,
-		                                      setting_hash ? setting_hash : secrets,
-		                                      error);
+		                                             setting_hash ? setting_hash : secrets,
+		                                             error);
 		g_signal_handlers_unblock_by_func (setting, (GCallback) setting_changed_cb, connection);
 
 		if (success_detail == NM_SETTING_UPDATE_SECRET_ERROR)
@@ -957,7 +1229,7 @@ nm_connection_to_hash (NMConnection *connection, NMSettingHashFlags flags)
 	g_return_val_if_fail (NM_IS_CONNECTION (connection), NULL);
 
 	ret = g_hash_table_new_full (g_str_hash, g_str_equal,
-	                             g_free, (GDestroyNotify) g_hash_table_destroy);
+	                             g_free, (GDestroyNotify) g_hash_table_unref);
 
 	priv = NM_CONNECTION_GET_PRIVATE (connection);
 
@@ -983,7 +1255,7 @@ nm_connection_to_hash (NMConnection *connection, NMSettingHashFlags flags)
 /**
  * nm_connection_is_type:
  * @connection: the #NMConnection
- * @type: a setting name to check the connection's type against (like 
+ * @type: a setting name to check the connection's type against (like
  * %NM_SETTING_WIRELESS_SETTING_NAME or %NM_SETTING_WIRED_SETTING_NAME)
  *
  * A convenience function to check if the given @connection is a particular
@@ -1106,6 +1378,33 @@ nm_connection_get_path (NMConnection *connection)
 }
 
 /**
+ * nm_connection_get_interface_name:
+ * @connection: The #NMConnection
+ *
+ * Returns the interface name as stored in NMSettingConnection:interface_name.
+ * If the connection contains no NMSettingConnection, it will return %NULL.
+ *
+ * For hardware devices and software devices created outside of NetworkManager,
+ * this name is used to match the device. for software devices created by
+ * NetworkManager, this is the name of the created interface.
+ *
+ * Returns: Name of the kernel interface or %NULL
+ *
+ * Since: 1.0
+ */
+const char *
+nm_connection_get_interface_name (NMConnection *connection)
+{
+	NMSettingConnection *s_con;
+
+	g_return_val_if_fail (NM_IS_CONNECTION (connection), NULL);
+
+	s_con = nm_connection_get_setting_connection (connection);
+
+	return s_con ? nm_setting_connection_get_interface_name (s_con) : NULL;
+}
+
+/**
  * nm_connection_get_virtual_iface_name:
  * @connection: The #NMConnection
  *
@@ -1119,12 +1418,21 @@ nm_connection_get_path (NMConnection *connection)
 const char *
 nm_connection_get_virtual_iface_name (NMConnection *connection)
 {
+	NMSettingConnection *s_con;
+	const char *type;
 	NMSetting *base;
 
 	g_return_val_if_fail (NM_IS_CONNECTION (connection), NULL);
 
-	base = _get_type_setting (connection);
-	g_assert (base);
+	s_con = nm_connection_get_setting_connection (connection);
+	g_return_val_if_fail (s_con, NULL);
+
+	type = nm_setting_connection_get_connection_type (s_con);
+	g_return_val_if_fail (type, NULL);
+
+	base = nm_connection_get_setting_by_name (connection, type);
+	if (!base)
+		return NULL;
 
 	return nm_setting_get_virtual_iface_name (base);
 }
@@ -1140,6 +1448,29 @@ NMConnection *
 nm_connection_new (void)
 {
 	return (NMConnection *) g_object_new (NM_TYPE_CONNECTION, NULL);
+}
+
+/**
+ * _nm_connection_new_from_hash:
+ * @hash: (element-type utf8 GLib.HashTable): the #GHashTable describing
+ * the connection
+ *
+ * Creates a new #NMConnection from a hash table describing the connection.  See
+ * nm_connection_to_hash() for a description of the expected hash table.
+ *
+ * Returns: the new #NMConnection object, populated with settings created
+ * from the values in the hash table.
+ **/
+NMConnection *
+_nm_connection_new_from_hash (GHashTable *hash)
+{
+	NMConnection *connection;
+
+	g_return_val_if_fail (hash != NULL, NULL);
+
+	connection = nm_connection_new ();
+	_nm_connection_replace_settings (connection, hash);
+	return connection;
 }
 
 /**
@@ -1165,11 +1496,9 @@ nm_connection_new_from_hash (GHashTable *hash, GError **error)
 	if (!validate_permissions_type (hash, error))
 		return NULL;
 
-	connection = nm_connection_new ();
-	if (!hash_to_connection (connection, hash, error)) {
-		g_object_unref (connection);
-		return NULL;
-	}
+	connection = _nm_connection_new_from_hash (hash);
+	if (!nm_connection_verify (connection, error))
+		g_clear_object (&connection);
 	return connection;
 }
 
@@ -1196,7 +1525,7 @@ nm_connection_duplicate (NMConnection *connection)
 
 	g_hash_table_iter_init (&iter, NM_CONNECTION_GET_PRIVATE (connection)->settings);
 	while (g_hash_table_iter_next (&iter, NULL, (gpointer) &setting))
-		nm_connection_add_setting (dup, nm_setting_duplicate (setting));
+		_nm_connection_add_setting (dup, nm_setting_duplicate (setting));
 
 	return dup;
 }
@@ -1750,14 +2079,8 @@ dispose (GObject *object)
 {
 	NMConnection *self = NM_CONNECTION (object);
 	NMConnectionPrivate *priv = NM_CONNECTION_GET_PRIVATE (self);
-	GHashTableIter iter;
-	NMSetting *setting;
 
-	g_hash_table_iter_init (&iter, priv->settings);
-	while (g_hash_table_iter_next (&iter, NULL, (gpointer) &setting)) {
-		g_signal_handlers_disconnect_by_func (setting, setting_changed_cb, self);
-		g_hash_table_iter_remove (&iter);
-	}
+	g_hash_table_foreach_remove (priv->settings, _setting_release, self);
 
 	G_OBJECT_CLASS (nm_connection_parent_class)->dispose (object);
 }
@@ -1768,6 +2091,7 @@ finalize (GObject *object)
 	NMConnection *connection = NM_CONNECTION (object);
 	NMConnectionPrivate *priv = NM_CONNECTION_GET_PRIVATE (connection);
 
+	g_assert (g_hash_table_size (priv->settings) == 0);
 	g_hash_table_destroy (priv->settings);
 	g_free (priv->path);
 
@@ -1776,7 +2100,7 @@ finalize (GObject *object)
 
 static void
 set_property (GObject *object, guint prop_id,
-		    const GValue *value, GParamSpec *pspec)
+              const GValue *value, GParamSpec *pspec)
 {
 	NMConnection *connection = NM_CONNECTION (object);
 
@@ -1792,7 +2116,7 @@ set_property (GObject *object, guint prop_id,
 
 static void
 get_property (GObject *object, guint prop_id,
-		    GValue *value, GParamSpec *pspec)
+              GValue *value, GParamSpec *pspec)
 {
 	NMConnection *connection = NM_CONNECTION (object);
 
@@ -1829,40 +2153,40 @@ nm_connection_class_init (NMConnectionClass *klass)
 	 **/
 	g_object_class_install_property
 		(object_class, PROP_PATH,
-		 g_param_spec_string (NM_CONNECTION_PATH,
-						  "Path",
-						  "Path",
-						  NULL,
-						  G_PARAM_READWRITE | G_PARAM_CONSTRUCT));
+		 g_param_spec_string (NM_CONNECTION_PATH, "", "",
+		                      NULL,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_CONSTRUCT |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/* Signals */
 
 	/**
-	* NMConnection::secrets-updated:
-	* @connection: the object on which the signal is emitted
-	* @setting_name: the setting name of the #NMSetting for which secrets were
-	* updated
-	*
-	* The ::secrets-updated signal is emitted when the secrets of a setting
-	* have been changed.
-	*/
+	 * NMConnection::secrets-updated:
+	 * @connection: the object on which the signal is emitted
+	 * @setting_name: the setting name of the #NMSetting for which secrets were
+	 * updated
+	 *
+	 * The ::secrets-updated signal is emitted when the secrets of a setting
+	 * have been changed.
+	 */
 	signals[SECRETS_UPDATED] =
 		g_signal_new (NM_CONNECTION_SECRETS_UPDATED,
-					  G_OBJECT_CLASS_TYPE (object_class),
-					  G_SIGNAL_RUN_FIRST,
-					  G_STRUCT_OFFSET (NMConnectionClass, secrets_updated),
-					  NULL, NULL,
-					  g_cclosure_marshal_VOID__STRING,
-					  G_TYPE_NONE, 1,
-					  G_TYPE_STRING);
+		              G_OBJECT_CLASS_TYPE (object_class),
+		              G_SIGNAL_RUN_FIRST,
+		              G_STRUCT_OFFSET (NMConnectionClass, secrets_updated),
+		              NULL, NULL,
+		              g_cclosure_marshal_VOID__STRING,
+		              G_TYPE_NONE, 1,
+		              G_TYPE_STRING);
 
 	/**
-	* NMConnection::secrets-cleared:
-	* @connection: the object on which the signal is emitted
-	*
-	* The ::secrets-cleared signal is emitted when the secrets of a connection
-	* are cleared.
-	*/
+	 * NMConnection::secrets-cleared:
+	 * @connection: the object on which the signal is emitted
+	 *
+	 * The ::secrets-cleared signal is emitted when the secrets of a connection
+	 * are cleared.
+	 */
 	signals[SECRETS_CLEARED] =
 		g_signal_new (NM_CONNECTION_SECRETS_CLEARED,
 		              G_OBJECT_CLASS_TYPE (object_class),
@@ -1872,15 +2196,15 @@ nm_connection_class_init (NMConnectionClass *klass)
 		              G_TYPE_NONE, 0);
 
 	/**
-	* NMConnection::changed:
-	* @connection: the object on which the signal is emitted
-	*
-	* The ::changed signal is emitted when any property of any property
-	* (including secrets) of any setting of the connection is modified,
-	* or when settings are added or removed.
-	*
-	* Since: 0.9.10
-	*/
+	 * NMConnection::changed:
+	 * @connection: the object on which the signal is emitted
+	 *
+	 * The ::changed signal is emitted when any property of any property
+	 * (including secrets) of any setting of the connection is modified,
+	 * or when settings are added or removed.
+	 *
+	 * Since: 0.9.10
+	 */
 	signals[CHANGED] =
 		g_signal_new (NM_CONNECTION_CHANGED,
 		              G_OBJECT_CLASS_TYPE (object_class),
@@ -1889,4 +2213,3 @@ nm_connection_class_init (NMConnectionClass *klass)
 		              g_cclosure_marshal_VOID__VOID,
 		              G_TYPE_NONE, 0);
 }
-

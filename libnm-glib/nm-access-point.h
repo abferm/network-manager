@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,8 +15,8 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2008 Novell, Inc.
- * Copyright (C) 2007 - 2011 Red Hat, Inc.
+ * Copyright 2007 - 2008 Novell, Inc.
+ * Copyright 2007 - 2011 Red Hat, Inc.
  */
 
 #ifndef NM_ACCESS_POINT_H
@@ -48,6 +46,7 @@ G_BEGIN_DECLS
 #define NM_ACCESS_POINT_MODE        "mode"
 #define NM_ACCESS_POINT_MAX_BITRATE "max-bitrate"
 #define NM_ACCESS_POINT_STRENGTH    "strength"
+#define NM_ACCESS_POINT_LAST_SEEN   "last-seen"
 
 /* DEPRECATED */
 #define NM_ACCESS_POINT_HW_ADDRESS  "hw-address"
@@ -82,6 +81,8 @@ guint32                nm_access_point_get_frequency    (NMAccessPoint *ap);
 NM80211Mode            nm_access_point_get_mode         (NMAccessPoint *ap);
 guint32                nm_access_point_get_max_bitrate  (NMAccessPoint *ap);
 guint8                 nm_access_point_get_strength     (NMAccessPoint *ap);
+NM_AVAILABLE_IN_1_2
+gint                   nm_access_point_get_last_seen    (NMAccessPoint *ap);
 
 GSList *               nm_access_point_filter_connections (NMAccessPoint *ap,
                                                            const GSList *connections);

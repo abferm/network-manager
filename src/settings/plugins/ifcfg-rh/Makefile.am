@@ -2,15 +2,31 @@ SUBDIRS = . tests
 
 @GNOME_CODE_COVERAGE_RULES@
 
-nm-ifcfg-rh-glue.h: nm-ifcfg-rh.xml
-	$(AM_V_GEN) dbus-binding-tool --prefix=nm_ifcfg_rh --mode=glib-server --output=$@ $<
+# See note about gdbus-codegen in introspection/Makefile.am
 
-BUILT_SOURCES = \
-	nm-ifcfg-rh-glue.h
+noinst_LTLIBRARIES = libnmdbus-ifcfg-rh.la
+
+nodist_libnmdbus_ifcfg_rh_la_SOURCES = \
+	nmdbus-ifcfg-rh.c \
+	nmdbus-ifcfg-rh.h
+
+libnmdbus_ifcfg_rh_la_CPPFLAGS = $(filter-out -DGLIB_VERSION_MAX_ALLOWED%,$(AM_CPPFLAGS))
+
+nmdbus-ifcfg-rh.h: nm-ifcfg-rh.xml
+	$(AM_V_GEN) gdbus-codegen \
+		--generate-c-code $(basename $@) \
+		--c-namespace NMDBus \
+		--interface-prefix com.redhat \
+		$<
+
+nmdbus-ifcfg-rh.c: nmdbus-ifcfg-rh.h
+	@true
+
+BUILT_SOURCES = nmdbus-ifcfg-rh.h nmdbus-ifcfg-rh.c
 
 pkglib_LTLIBRARIES = libnm-settings-plugin-ifcfg-rh.la
 
-noinst_LTLIBRARIES = libifcfg-rh-io.la
+noinst_LTLIBRARIES += libifcfg-rh-io.la
 
 libifcfg_rh_io_la_SOURCES = \
 	shvar.c \
@@ -19,27 +35,20 @@ libifcfg_rh_io_la_SOURCES = \
 	reader.h \
 	writer.c \
 	writer.h \
-	errors.c \
 	common.h \
 	utils.c \
 	utils.h
 
 AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/ \
-	-I$(top_srcdir)/src/logging \
 	-I$(top_srcdir)/src/platform \
 	-I$(top_srcdir)/src/settings \
-	-I$(top_srcdir)/src/posix-signals \
-	-I$(top_srcdir)/src/config \
-	-I$(top_srcdir)/include \
-	-I$(top_builddir)/include \
-	-I$(top_srcdir)/libnm-glib \
-	-I$(top_srcdir)/libnm-util \
-	-I$(top_builddir)/libnm-util \
-	-DNM_VERSION_MAX_ALLOWED=NM_VERSION_NEXT_STABLE \
+	-I$(top_srcdir)/shared \
+	-I$(top_builddir)/shared \
+	-I$(top_srcdir)/libnm-core \
+	-I$(top_builddir)/libnm-core \
+	-DNETWORKMANAGER_COMPILATION=NM_NETWORKMANAGER_COMPILATION_INSIDE_DAEMON \
 	$(GLIB_CFLAGS) \
-	$(DBUS_CFLAGS) \
-	$(POLKIT_CFLAGS) \
 	$(NSS_CFLAGS) \
 	-DG_LOG_DOMAIN=\""NetworkManager-ifcfg-rh"\" \
 	-DSYSCONFDIR=\"$(sysconfdir)\" \
@@ -52,11 +61,7 @@ libnm_settings_plugin_ifcfg_rh_la_SOURCES = \
 	nm-ifcfg-connection.h
 
 libnm_settings_plugin_ifcfg_rh_la_LDFLAGS = -module -avoid-version
-libnm_settings_plugin_ifcfg_rh_la_LIBADD = \
-	$(top_builddir)/libnm-util/libnm-util.la \
-	$(top_builddir)/libnm-glib/libnm-glib.la \
-	libifcfg-rh-io.la \
-	$(GLIB_LIBS)
+libnm_settings_plugin_ifcfg_rh_la_LIBADD = libifcfg-rh-io.la libnmdbus-ifcfg-rh.la
 
 dbusservicedir = $(DBUS_SYS_DIR)
 dbusservice_DATA = nm-ifcfg-rh.conf

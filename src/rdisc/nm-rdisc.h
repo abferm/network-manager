@@ -18,13 +18,14 @@
  * Copyright (C) 2013 Red Hat, Inc.
  */
 
-#ifndef NM_RDISC_H
-#define NM_RDISC_H
-
-#include <glib-object.h>
+#ifndef __NETWORKMANAGER_RDISC_H__
+#define __NETWORKMANAGER_RDISC_H__
 
 #include <stdlib.h>
 #include <netinet/in.h>
+
+#include "nm-setting-ip6-config.h"
+#include "NetworkManagerUtils.h"
 
 #define NM_TYPE_RDISC            (nm_rdisc_get_type ())
 #define NM_RDISC(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), NM_TYPE_RDISC, NMRDisc))
@@ -33,7 +34,9 @@
 #define NM_IS_RDISC_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass), NM_TYPE_RDISC))
 #define NM_RDISC_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj), NM_TYPE_RDISC, NMRDiscClass))
 
+#define NM_RDISC_PLATFORM       "platform"
 #define NM_RDISC_CONFIG_CHANGED "config-changed"
+#define NM_RDISC_RA_TIMEOUT     "ra-timeout"
 
 typedef enum {
 	NM_RDISC_DHCP_LEVEL_UNKNOWN,
@@ -58,6 +61,7 @@ typedef struct {
 
 typedef struct {
 	struct in6_addr address;
+	guint8 dad_counter;
 	guint32 timestamp;
 	guint32 lifetime;
 	guint32 preferred;
@@ -92,6 +96,7 @@ typedef enum {
 	NM_RDISC_CONFIG_DNS_SERVERS                         = 1 << 4,
 	NM_RDISC_CONFIG_DNS_DOMAINS                         = 1 << 5,
 	NM_RDISC_CONFIG_HOP_LIMIT                           = 1 << 6,
+	NM_RDISC_CONFIG_MTU                                 = 1 << 7,
 } NMRDiscConfigMap;
 
 #define NM_RDISC_MAX_ADDRESSES_DEFAULT 16
@@ -108,9 +113,14 @@ typedef enum {
 typedef struct {
 	GObject parent;
 
+	NMPlatform *_platform;
+	NMPNetns *_netns;
+
 	int ifindex;
 	char *ifname;
-	GBytes *lladdr;
+	char *uuid;
+	NMSettingIP6ConfigAddrGenMode addr_gen_mode;
+	NMUtilsIPv6IfaceId iid;
 	gint32 max_addresses;
 	gint32 rtr_solicitations;
 	gint32 rtr_solicitation_interval;
@@ -122,18 +132,27 @@ typedef struct {
 	GArray *dns_servers;
 	GArray *dns_domains;
 	int hop_limit;
+	guint32 mtu;
 } NMRDisc;
 
 typedef struct {
 	GObjectClass parent;
 
 	void (*start) (NMRDisc *rdisc);
+	gboolean (*send_rs) (NMRDisc *rdisc, GError **error);
 	void (*config_changed) (NMRDisc *rdisc, NMRDiscConfigMap changed);
+	void (*ra_process) (NMRDisc *rdisc);
+	void (*ra_timeout) (NMRDisc *rdisc);
 } NMRDiscClass;
 
 GType nm_rdisc_get_type (void);
 
-void nm_rdisc_set_lladdr (NMRDisc *rdisc, const char *addr, size_t addrlen);
+gboolean nm_rdisc_set_iid (NMRDisc *rdisc, const NMUtilsIPv6IfaceId iid);
 void nm_rdisc_start (NMRDisc *rdisc);
+void nm_rdisc_dad_failed (NMRDisc *rdisc, struct in6_addr *address);
 
-#endif /* NM_RDISC_H */
+NMPlatform *nm_rdisc_get_platform (NMRDisc *self);
+NMPNetns *nm_rdisc_netns_get (NMRDisc *self);
+gboolean nm_rdisc_netns_push (NMRDisc *self, NMPNetns **netns);
+
+#endif /* __NETWORKMANAGER_RDISC_H__ */

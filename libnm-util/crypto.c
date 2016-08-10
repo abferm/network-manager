@@ -18,17 +18,15 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * (C) Copyright 2007 - 2011 Red Hat, Inc.
+ * Copyright 2007 - 2011 Red Hat, Inc.
  */
 
-#include "config.h"
+#include "nm-default.h"
 
-#include <glib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <glib/gi18n.h>
 
 #include "crypto.h"
 
@@ -360,8 +358,8 @@ convert_iv (const char *src,
 
 	conv[2] = '\0';
 	for (i = 0; i < num; i++) {
-        conv[0] = src[(i * 2)];
-        conv[1] = src[(i * 2) + 1];
+		conv[0] = src[(i * 2)];
+		conv[1] = src[(i * 2) + 1];
 		if (!g_ascii_isxdigit (conv[0]) || !g_ascii_isxdigit (conv[1])) {
 			g_set_error (error, NM_CRYPTO_ERROR,
 			             NM_CRYPTO_ERR_RAW_IV_INVALID,
@@ -526,11 +524,11 @@ crypto_decrypt_private_key_data (const GByteArray *contents,
 
 		if (password) {
 			decrypted = decrypt_key (cipher,
-						             key_type,
-						             data,
-						             iv,
-						             password,
-						             error);
+			                         key_type,
+			                         data,
+			                         iv,
+			                         password,
+			                         error);
 		}
 		g_byte_array_free (data, TRUE);
 	}
@@ -569,18 +567,18 @@ extract_pem_cert_data (GByteArray *contents, GError **error)
 
 	if (!find_tag (PEM_CERT_BEGIN, contents, 0, &start)) {
 		g_set_error (error, NM_CRYPTO_ERROR,
-			         NM_CRYPTO_ERR_FILE_FORMAT_INVALID,
-			         _("PEM certificate had no start tag '%s'."),
-			         PEM_CERT_BEGIN);
+		             NM_CRYPTO_ERR_FILE_FORMAT_INVALID,
+		             _("PEM certificate had no start tag '%s'."),
+		             PEM_CERT_BEGIN);
 		goto done;
 	}
 
 	start += strlen (PEM_CERT_BEGIN);
 	if (!find_tag (PEM_CERT_END, contents, start, &end)) {
 		g_set_error (error, NM_CRYPTO_ERROR,
-			         NM_CRYPTO_ERR_FILE_FORMAT_INVALID,
-			         _("PEM certificate had no end tag '%s'."),
-			         PEM_CERT_END);
+		             NM_CRYPTO_ERR_FILE_FORMAT_INVALID,
+		             _("PEM certificate had no end tag '%s'."),
+		             PEM_CERT_END);
 		goto done;
 	}
 
@@ -596,8 +594,8 @@ extract_pem_cert_data (GByteArray *contents, GError **error)
 		g_assert (cert->len == length);
 	} else {
 		g_set_error (error, NM_CRYPTO_ERROR,
-			         NM_CRYPTO_ERR_DECODE_FAILED,
-			         _("Failed to decode certificate."));
+		             NM_CRYPTO_ERR_DECODE_FAILED,
+		             _("Failed to decode certificate."));
 	}
 
 done:
@@ -655,6 +653,9 @@ crypto_is_pkcs12_data (const GByteArray *data)
 	gboolean success;
 
 	g_return_val_if_fail (data != NULL, FALSE);
+
+	if (!data->len)
+		return FALSE;
 
 	success = crypto_verify_pkcs12 (data, NULL, &error);
 	if (success == FALSE) {
@@ -747,4 +748,3 @@ crypto_verify_private_key (const char *filename,
 	}
 	return format;
 }
-

@@ -18,10 +18,8 @@
  * Copyright 2013 Red Hat, Inc.
  */
 
-#ifndef NM_DEVICE_TUN_H
-#define NM_DEVICE_TUN_H
-
-#include <glib-object.h>
+#ifndef __NETWORKMANAGER_DEVICE_TUN_H__
+#define __NETWORKMANAGER_DEVICE_TUN_H__
 
 #include "nm-device-generic.h"
 
@@ -41,18 +39,10 @@ G_BEGIN_DECLS
 #define NM_DEVICE_TUN_VNET_HDR    "vnet-hdr"
 #define NM_DEVICE_TUN_MULTI_QUEUE "multi-queue"
 
-typedef struct {
-	NMDeviceGeneric parent;
-} NMDeviceTun;
-
-typedef struct {
-	NMDeviceGenericClass parent;
-
-} NMDeviceTunClass;
+typedef NMDevice NMDeviceTun;
+typedef NMDeviceClass NMDeviceTunClass;
 
 GType nm_device_tun_get_type (void);
-
-NMDevice *nm_device_tun_new (NMPlatformLink *platform_device);
 
 G_END_DECLS
 

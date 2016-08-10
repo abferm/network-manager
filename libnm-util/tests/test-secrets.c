@@ -15,14 +15,15 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2008 - 2011 Red Hat, Inc.
+ * Copyright 2008 - 2011 Red Hat, Inc.
  *
  */
 
-#include <glib.h>
+#include "nm-default.h"
+
 #include <string.h>
 
-#include <nm-utils.h>
+#include "nm-utils.h"
 
 #include "nm-setting-connection.h"
 #include "nm-setting-wired.h"
@@ -42,16 +43,20 @@
 #define TEST_NEED_SECRETS_EAP_TLS_CLIENT_CERT TEST_CERT_DIR "/test_key_and_cert.pem"
 #define TEST_NEED_SECRETS_EAP_TLS_PRIVATE_KEY TEST_CERT_DIR "/test_key_and_cert.pem"
 
-static gboolean
-find_hints_item (GPtrArray *hints, const char *item)
+static void
+_assert_hints_has (GPtrArray *hints, const char *item)
 {
-	int i;
+	guint i;
+	guint found = 0;
 
+	g_assert (hints);
+	g_assert (item);
 	for (i = 0; i < hints->len; i++) {
-		if (!strcmp (item, (const char *) g_ptr_array_index (hints, i)))
-			return TRUE;
+		g_assert (hints->pdata[i]);
+		if (!strcmp (item, hints->pdata[i]))
+			found++;
 	}
-	return FALSE;
+	g_assert_cmpint (found, ==, 1);
 }
 
 static NMConnection *
@@ -98,18 +103,14 @@ make_tls_connection (const char *detail, NMSetting8021xCKScheme scheme)
 	                                         scheme,
 	                                         NULL,
 	                                         &error);
-	ASSERT (success == TRUE,
-	        detail, "failed to set CA certificate '%s': %s",
-	        TEST_NEED_SECRETS_EAP_TLS_CA_CERT, error->message);
+	nmtst_assert_success (success, error);
 
 	success = nm_setting_802_1x_set_client_cert (s_8021x,
 	                                             TEST_NEED_SECRETS_EAP_TLS_CLIENT_CERT,
 	                                             scheme,
 	                                             NULL,
 	                                             &error);
-	ASSERT (success == TRUE,
-	        detail, "failed to set client certificate '%s': %s",
-	        TEST_NEED_SECRETS_EAP_TLS_CLIENT_CERT, error->message);
+	nmtst_assert_success (success, error);
 
 	success = nm_setting_802_1x_set_private_key (s_8021x,
 	                                             TEST_NEED_SECRETS_EAP_TLS_PRIVATE_KEY,
@@ -117,9 +118,7 @@ make_tls_connection (const char *detail, NMSetting8021xCKScheme scheme)
 	                                             scheme,
 	                                             NULL,
 	                                             &error);
-	ASSERT (success == TRUE,
-	        detail, "failed to set private key '%s': %s",
-	        TEST_NEED_SECRETS_EAP_TLS_PRIVATE_KEY, error->message);
+	nmtst_assert_success (success, error);
 
 	/* IP4 setting */
 	s_ip4 = (NMSettingIP4Config *) nm_setting_ip4_config_new ();
@@ -127,9 +126,7 @@ make_tls_connection (const char *detail, NMSetting8021xCKScheme scheme)
 
 	g_object_set (s_ip4, NM_SETTING_IP4_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_AUTO, NULL);
 
-	ASSERT (nm_connection_verify (connection, &error) == TRUE,
-	        detail, "failed to verify connection: %s",
-	        (error && error->message) ? error->message : "(unknown)");
+	nmtst_assert_connection_verifies_and_normalizable (connection);
 
 	return connection;
 }
@@ -142,38 +139,21 @@ test_need_tls_secrets_path (void)
 	GPtrArray *hints = NULL;
 
 	connection = make_tls_connection ("need-tls-secrets-path-key", NM_SETTING_802_1X_CK_SCHEME_PATH);
-	ASSERT (connection != NULL,
-	        "need-tls-secrets-path-key",
-	        "error creating test connection");
 
 	/* Ensure we don't need any secrets since we just set up the connection */
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name == NULL,
-	        "need-tls-secrets-path-key",
-	        "secrets are unexpectedly required");
-	ASSERT (hints == NULL,
-	        "need-tls-secrets-path-key",
-	        "hints should be NULL since no secrets were required");
+	g_assert (!setting_name);
+	g_assert (!hints);
 
 	/* Connection is good; clear secrets and ensure private key password is then required */
 	nm_connection_clear_secrets (connection);
 
 	hints = NULL;
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name != NULL,
-	        "need-tls-secrets-path-key-password",
-	        "unexpected secrets success");
-	ASSERT (strcmp (setting_name, NM_SETTING_802_1X_SETTING_NAME) == 0,
-			"need-tls-secrets-path-key-password",
-			"unexpected setting secrets required");
+	g_assert_cmpstr (setting_name, ==, NM_SETTING_802_1X_SETTING_NAME);
+	_assert_hints_has (hints, NM_SETTING_802_1X_PRIVATE_KEY_PASSWORD);
 
-	ASSERT (hints != NULL,
-	        "need-tls-secrets-path-key-password",
-	        "expected returned secrets hints");
-	ASSERT (find_hints_item (hints, NM_SETTING_802_1X_PRIVATE_KEY_PASSWORD),
-			"need-tls-secrets-path-key-password",
-			"expected to require private key password, but it wasn't");
-
+	g_ptr_array_free (hints, TRUE);
 	g_object_unref (connection);
 }
 
@@ -185,38 +165,21 @@ test_need_tls_secrets_blob (void)
 	GPtrArray *hints = NULL;
 
 	connection = make_tls_connection ("need-tls-secrets-blob-key", NM_SETTING_802_1X_CK_SCHEME_BLOB);
-	ASSERT (connection != NULL,
-	        "need-tls-secrets-blob-key",
-	        "error creating test connection");
 
 	/* Ensure we don't need any secrets since we just set up the connection */
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name == NULL,
-	        "need-tls-secrets-blob-key",
-	        "secrets are unexpectedly required");
-	ASSERT (hints == NULL,
-	        "need-tls-secrets-blob-key",
-	        "hints should be NULL since no secrets were required");
+	g_assert (!setting_name);
+	g_assert (!hints);
 
 	/* Clear secrets and ensure password is again required */
 	nm_connection_clear_secrets (connection);
 
 	hints = NULL;
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name != NULL,
-	        "need-tls-secrets-blob-key-password",
-	        "unexpected secrets success");
-	ASSERT (strcmp (setting_name, NM_SETTING_802_1X_SETTING_NAME) == 0,
-			"need-tls-secrets-blob-key-password",
-			"unexpected setting secrets required");
+	g_assert_cmpstr (setting_name, ==, NM_SETTING_802_1X_SETTING_NAME);
+	_assert_hints_has (hints, NM_SETTING_802_1X_PRIVATE_KEY_PASSWORD);
 
-	ASSERT (hints != NULL,
-	        "need-tls-secrets-blob-key-password",
-	        "expected returned secrets hints");
-	ASSERT (find_hints_item (hints, NM_SETTING_802_1X_PRIVATE_KEY_PASSWORD),
-			"need-tls-secrets-blob-key-password",
-			"expected to require private key password, but it wasn't");
-
+	g_ptr_array_free (hints, TRUE);
 	g_object_unref (connection);
 }
 
@@ -266,18 +229,14 @@ make_tls_phase2_connection (const char *detail, NMSetting8021xCKScheme scheme)
 	                                                scheme,
 	                                                NULL,
 	                                                &error);
-	ASSERT (success == TRUE,
-	        detail, "failed to set phase2 CA certificate '%s': %s",
-	        TEST_NEED_SECRETS_EAP_TLS_CA_CERT, error->message);
+	nmtst_assert_success (success, error);
 
 	success = nm_setting_802_1x_set_phase2_client_cert (s_8021x,
 	                                                    TEST_NEED_SECRETS_EAP_TLS_CLIENT_CERT,
 	                                                    scheme,
 	                                                    NULL,
 	                                                    &error);
-	ASSERT (success == TRUE,
-	        detail, "failed to set phase2 client certificate '%s': %s",
-	        TEST_NEED_SECRETS_EAP_TLS_CLIENT_CERT, error->message);
+	nmtst_assert_success (success, error);
 
 	success = nm_setting_802_1x_set_phase2_private_key (s_8021x,
 	                                                    TEST_NEED_SECRETS_EAP_TLS_PRIVATE_KEY,
@@ -285,9 +244,7 @@ make_tls_phase2_connection (const char *detail, NMSetting8021xCKScheme scheme)
 	                                                    scheme,
 	                                                    NULL,
 	                                                    &error);
-	ASSERT (success == TRUE,
-	        detail, "failed to set phase2 private key '%s': %s",
-	        TEST_NEED_SECRETS_EAP_TLS_PRIVATE_KEY, error->message);
+	nmtst_assert_success (success, error);
 
 	/* IP4 setting */
 	s_ip4 = (NMSettingIP4Config *) nm_setting_ip4_config_new ();
@@ -295,9 +252,7 @@ make_tls_phase2_connection (const char *detail, NMSetting8021xCKScheme scheme)
 
 	g_object_set (s_ip4, NM_SETTING_IP4_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_AUTO, NULL);
 
-	ASSERT (nm_connection_verify (connection, &error) == TRUE,
-	        detail, "failed to verify connection: %s",
-	        (error && error->message) ? error->message : "(unknown)");
+	nmtst_assert_connection_verifies_and_normalizable (connection);
 
 	return connection;
 }
@@ -311,38 +266,21 @@ test_need_tls_phase2_secrets_path (void)
 
 	connection = make_tls_phase2_connection ("need-tls-phase2-secrets-path-key",
 	                                         NM_SETTING_802_1X_CK_SCHEME_PATH);
-	ASSERT (connection != NULL,
-	        "need-tls-phase2-secrets-path-key",
-	        "error creating test connection");
 
 	/* Ensure we don't need any secrets since we just set up the connection */
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name == NULL,
-	        "need-tls-phase2-secrets-path-key",
-	        "secrets are unexpectedly required");
-	ASSERT (hints == NULL,
-	        "need-tls-phase2-secrets-path-key",
-	        "hints should be NULL since no secrets were required");
+	g_assert (!setting_name);
+	g_assert (!hints);
 
 	/* Connection is good; clear secrets and ensure private key password is then required */
 	nm_connection_clear_secrets (connection);
 
 	hints = NULL;
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name != NULL,
-	        "need-tls-phase2-secrets-path-key-password",
-	        "unexpected secrets success");
-	ASSERT (strcmp (setting_name, NM_SETTING_802_1X_SETTING_NAME) == 0,
-			"need-tls-phase2-secrets-path-key-password",
-			"unexpected setting secrets required");
+	g_assert_cmpstr (setting_name, ==, NM_SETTING_802_1X_SETTING_NAME);
+	_assert_hints_has (hints, NM_SETTING_802_1X_PHASE2_PRIVATE_KEY_PASSWORD);
 
-	ASSERT (hints != NULL,
-	        "need-tls-phase2-secrets-path-key-password",
-	        "expected returned secrets hints");
-	ASSERT (find_hints_item (hints, NM_SETTING_802_1X_PHASE2_PRIVATE_KEY_PASSWORD),
-			"need-tls-phase2-secrets-path-key-password",
-			"expected to require private key password, but it wasn't");
-
+	g_ptr_array_free (hints, TRUE);
 	g_object_unref (connection);
 }
 
@@ -355,38 +293,21 @@ test_need_tls_phase2_secrets_blob (void)
 
 	connection = make_tls_phase2_connection ("need-tls-phase2-secrets-blob-key",
 	                                         NM_SETTING_802_1X_CK_SCHEME_BLOB);
-	ASSERT (connection != NULL,
-	        "need-tls-phase2-secrets-blob-key",
-	        "error creating test connection");
 
 	/* Ensure we don't need any secrets since we just set up the connection */
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name == NULL,
-	        "need-tls-phase2-secrets-blob-key",
-	        "secrets are unexpectedly required");
-	ASSERT (hints == NULL,
-	        "need-tls-phase2-secrets-blob-key",
-	        "hints should be NULL since no secrets were required");
+	g_assert (!setting_name);
+	g_assert (!hints);
 
 	/* Connection is good; clear secrets and ensure private key password is then required */
 	nm_connection_clear_secrets (connection);
 
 	hints = NULL;
 	setting_name = nm_connection_need_secrets (connection, &hints);
-	ASSERT (setting_name != NULL,
-	        "need-tls-phase2-secrets-blob-key-password",
-	        "unexpected secrets success");
-	ASSERT (strcmp (setting_name, NM_SETTING_802_1X_SETTING_NAME) == 0,
-			"need-tls-phase2-secrets-blob-key-password",
-			"unexpected setting secrets required");
+	g_assert_cmpstr (setting_name, ==, NM_SETTING_802_1X_SETTING_NAME);
+	_assert_hints_has (hints, NM_SETTING_802_1X_PHASE2_PRIVATE_KEY_PASSWORD);
 
-	ASSERT (hints != NULL,
-	        "need-tls-phase2-secrets-blob-key-password",
-	        "expected returned secrets hints");
-	ASSERT (find_hints_item (hints, NM_SETTING_802_1X_PHASE2_PRIVATE_KEY_PASSWORD),
-			"need-tls-phase2-secrets-blob-key-password",
-			"expected to require private key password, but it wasn't");
-
+	g_ptr_array_free (hints, TRUE);
 	g_object_unref (connection);
 }
 
@@ -505,6 +426,7 @@ test_update_secrets_wifi_single_setting (void)
 	tmp = nm_setting_wireless_security_get_wep_key (s_wsec, 0);
 	g_assert_cmpstr (tmp, ==, wepkey);
 
+	g_hash_table_unref (secrets);
 	g_object_unref (connection);
 }
 
@@ -545,6 +467,7 @@ test_update_secrets_wifi_full_hash (void)
 	tmp = nm_setting_wireless_security_get_wep_key (s_wsec, 0);
 	g_assert_cmpstr (tmp, ==, wepkey);
 
+	g_hash_table_unref (all);
 	g_object_unref (connection);
 }
 
@@ -575,6 +498,8 @@ test_update_secrets_wifi_bad_setting_name (void)
 	g_assert_error (error, NM_CONNECTION_ERROR, NM_CONNECTION_ERROR_SETTING_NOT_FOUND);
 	g_assert (success == FALSE);
 
+	g_clear_error (&error);
+	g_hash_table_unref (secrets);
 	g_object_unref (connection);
 }
 
@@ -598,7 +523,7 @@ test_update_secrets_whole_connection (void)
 	secrets = nm_connection_to_hash (connection, NM_SETTING_HASH_FLAG_ALL);
 	wsec_hash = g_hash_table_lookup (secrets, NM_SETTING_WIRELESS_SECURITY_SETTING_NAME);
 	g_assert (wsec_hash);
-	g_hash_table_insert (wsec_hash, NM_SETTING_WIRELESS_SECURITY_WEP_KEY0, string_to_gvalue (wepkey));
+	g_hash_table_insert (wsec_hash, g_strdup (NM_SETTING_WIRELESS_SECURITY_WEP_KEY0), string_to_gvalue (wepkey));
 
 	success = nm_connection_update_secrets (connection, NULL, secrets, &error);
 	g_assert_no_error (error);
@@ -608,6 +533,7 @@ test_update_secrets_whole_connection (void)
 	g_assert (s_wsec);
 	g_assert_cmpstr (nm_setting_wireless_security_get_wep_key (s_wsec, 0), ==, wepkey);
 
+	g_hash_table_unref (secrets);
 	g_object_unref (connection);
 }
 
@@ -627,6 +553,7 @@ test_update_secrets_whole_connection_empty_hash (void)
 	g_assert_no_error (error);
 	g_assert (success == TRUE);
 	g_object_unref (connection);
+	g_hash_table_unref (secrets);
 }
 
 static void
@@ -648,20 +575,23 @@ test_update_secrets_whole_connection_bad_setting (void)
 	secrets = nm_connection_to_hash (connection, NM_SETTING_HASH_FLAG_ALL);
 	wsec_hash = g_hash_table_lookup (secrets, NM_SETTING_WIRELESS_SECURITY_SETTING_NAME);
 	g_assert (wsec_hash);
-	g_hash_table_insert (wsec_hash, NM_SETTING_WIRELESS_SECURITY_WEP_KEY0, string_to_gvalue (wepkey));
+	g_hash_table_insert (wsec_hash, g_strdup (NM_SETTING_WIRELESS_SECURITY_WEP_KEY0), string_to_gvalue (wepkey));
 
 	/* Steal the wsec setting hash so it's not deallocated, and stuff it back
 	 * in with a different name so we ensure libnm-util is returning the right
 	 * error when it finds an entry in the connection hash that doesn't match
 	 * any setting in the connection.
 	 */
-	g_hash_table_steal (secrets, NM_SETTING_WIRELESS_SECURITY_SETTING_NAME);
-	g_hash_table_insert (secrets, "asdfasdfasdfasdf", wsec_hash);
+	g_hash_table_ref (wsec_hash);
+	g_hash_table_remove (secrets, NM_SETTING_WIRELESS_SECURITY_SETTING_NAME);
+	g_hash_table_insert (secrets, g_strdup ("asdfasdfasdfasdf"), wsec_hash);
 
 	success = nm_connection_update_secrets (connection, NULL, secrets, &error);
 	g_assert_error (error, NM_CONNECTION_ERROR, NM_CONNECTION_ERROR_SETTING_NOT_FOUND);
 	g_assert (success == FALSE);
 
+	g_clear_error (&error);
+	g_hash_table_destroy (secrets);
 	g_object_unref (connection);
 }
 
@@ -679,7 +609,7 @@ test_update_secrets_whole_connection_empty_base_setting (void)
 
 	connection = wifi_connection_new ();
 	secrets = nm_connection_to_hash (connection, NM_SETTING_HASH_FLAG_ONLY_SECRETS);
-	g_assert_cmpint (g_hash_table_size (secrets), ==, 1);
+	g_assert_cmpint (g_hash_table_size (secrets), ==, 3);
 	g_assert (g_hash_table_lookup (secrets, NM_SETTING_WIRELESS_SETTING_NAME));
 
 	success = nm_connection_update_secrets (connection,
@@ -714,41 +644,40 @@ test_update_secrets_null_setting_name_with_setting_hash (void)
 	g_assert_error (error, NM_CONNECTION_ERROR, NM_CONNECTION_ERROR_SETTING_NOT_FOUND);
 	g_assert (!success);
 
+	g_clear_error (&error);
 	g_hash_table_destroy (secrets);
 	g_object_unref (connection);
 }
 
+NMTST_DEFINE ();
+
 int main (int argc, char **argv)
 {
 	GError *error = NULL;
-	char *base;
+	gboolean success;
 
-#if !GLIB_CHECK_VERSION (2, 35, 0)
-	g_type_init ();
-#endif
+	nmtst_init (&argc, &argv, TRUE);
 
-	if (!nm_utils_init (&error))
-		FAIL ("nm-utils-init", "failed to initialize libnm-util: %s", error->message);
+	success = nm_utils_init (&error);
+	g_assert_no_error (error);
+	g_assert (success);
 
 	/* The tests */
-	test_need_tls_secrets_path ();
-	test_need_tls_secrets_blob ();
-	test_need_tls_phase2_secrets_path ();
-	test_need_tls_phase2_secrets_blob ();
+	g_test_add_func ("/libnm/need_tls_secrets_path", test_need_tls_secrets_path);
+	g_test_add_func ("/libnm/need_tls_secrets_blob", test_need_tls_secrets_blob);
+	g_test_add_func ("/libnm/need_tls_phase2_secrets_path", test_need_tls_phase2_secrets_path);
+	g_test_add_func ("/libnm/need_tls_phase2_secrets_blob", test_need_tls_phase2_secrets_blob);
 
-	test_update_secrets_wifi_single_setting ();
-	test_update_secrets_wifi_full_hash ();
-	test_update_secrets_wifi_bad_setting_name ();
+	g_test_add_func ("/libnm/update_secrets_wifi_single_setting", test_update_secrets_wifi_single_setting);
+	g_test_add_func ("/libnm/update_secrets_wifi_full_hash", test_update_secrets_wifi_full_hash);
+	g_test_add_func ("/libnm/update_secrets_wifi_bad_setting_name", test_update_secrets_wifi_bad_setting_name);
 
-	test_update_secrets_whole_connection ();
-	test_update_secrets_whole_connection_empty_hash ();
-	test_update_secrets_whole_connection_bad_setting ();
-	test_update_secrets_whole_connection_empty_base_setting ();
-	test_update_secrets_null_setting_name_with_setting_hash ();
+	g_test_add_func ("/libnm/update_secrets_whole_connection", test_update_secrets_whole_connection);
+	g_test_add_func ("/libnm/update_secrets_whole_connection_empty_hash", test_update_secrets_whole_connection_empty_hash);
+	g_test_add_func ("/libnm/update_secrets_whole_connection_bad_setting", test_update_secrets_whole_connection_bad_setting);
+	g_test_add_func ("/libnm/update_secrets_whole_connection_empty_base_setting", test_update_secrets_whole_connection_empty_base_setting);
+	g_test_add_func ("/libnm/update_secrets_null_setting_name_with_setting_hash", test_update_secrets_null_setting_name_with_setting_hash);
 
-	base = g_path_get_basename (argv[0]);
-	fprintf (stdout, "%s: SUCCESS\n", base);
-	g_free (base);
-	return 0;
+	return g_test_run ();
 }
 
