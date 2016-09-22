@@ -19,19 +19,23 @@
  * Copyright (C) 2006 - 2008 Novell, Inc.
  */
 
-#ifndef WIFI_UTILS_H
-#define WIFI_UTILS_H
+#ifndef __WIFI_UTILS_H__
+#define __WIFI_UTILS_H__
 
 #include <net/ethernet.h>
-#include <glib.h>
 
-#include "NetworkManager.h"
+#include "nm-default.h"
+#include "nm-dbus-interface.h"
 
 typedef struct WifiData WifiData;
 
 gboolean wifi_utils_is_wifi (const char *iface, const char *sysfs_path);
 
 WifiData *wifi_utils_init (const char *iface, int ifindex, gboolean check_scan);
+
+int wifi_utils_get_ifindex (WifiData *data);
+
+const char *wifi_utils_get_iface (WifiData *data);
 
 void wifi_utils_deinit (WifiData *data);
 
@@ -44,14 +48,12 @@ gboolean wifi_utils_set_mode (WifiData *data, const NM80211Mode mode);
 /* Returns frequency in MHz */
 guint32 wifi_utils_get_freq (WifiData *data);
 
-/* Return the first supported frequency in the zero-terminated list */
+/* Return the first supported frequency in the zero-terminated list.
+ * Frequencies are specified in MHz. */
 guint32 wifi_utils_find_freq (WifiData *data, const guint32 *freqs);
 
-/* Caller must free returned byte array */
-GByteArray *wifi_utils_get_ssid (WifiData *data);
-
-/* Caller must free returned byte array */
-gboolean wifi_utils_get_bssid (WifiData *data, struct ether_addr *out_bssid);
+/* out_bssid must be ETH_ALEN bytes */
+gboolean wifi_utils_get_bssid (WifiData *data, guint8 *out_bssid);
 
 /* Returns current bitrate in Kbps */
 guint32 wifi_utils_get_rate (WifiData *data);
@@ -65,12 +67,14 @@ gboolean wifi_utils_indicate_addressing_running (WifiData *data, gboolean runnin
 /* Returns true if WoWLAN is enabled on device */
 gboolean wifi_utils_get_wowlan (WifiData *data);
 
+gboolean wifi_utils_set_powersave (WifiData *data, guint32 powersave);
+
 
 /* OLPC Mesh-only functions */
 guint32 wifi_utils_get_mesh_channel (WifiData *data);
 
 gboolean wifi_utils_set_mesh_channel (WifiData *data, guint32 channel);
 
-gboolean wifi_utils_set_mesh_ssid (WifiData *data, const GByteArray *ssid);
+gboolean wifi_utils_set_mesh_ssid (WifiData *data, const guint8 *ssid, gsize len);
 
-#endif  /* WIFI_UTILS_H */
+#endif  /* __WIFI_UTILS_H__ */

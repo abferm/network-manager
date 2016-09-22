@@ -18,10 +18,8 @@
  * Copyright 2013, 2014 Red Hat, Inc.
  */
 
-#ifndef NM_DEVICE_VXLAN_H
-#define NM_DEVICE_VXLAN_H
-
-#include <glib-object.h>
+#ifndef __NETWORKMANAGER_DEVICE_VXLAN_H__
+#define __NETWORKMANAGER_DEVICE_VXLAN_H__
 
 #include "nm-device-generic.h"
 
@@ -51,18 +49,10 @@ G_BEGIN_DECLS
 #define NM_DEVICE_VXLAN_L2MISS       "l2miss"
 #define NM_DEVICE_VXLAN_L3MISS       "l3miss"
 
-typedef struct {
-	NMDeviceGeneric parent;
-} NMDeviceVxlan;
-
-typedef struct {
-	NMDeviceGenericClass parent;
-
-} NMDeviceVxlanClass;
+typedef NMDevice NMDeviceVxlan;
+typedef NMDeviceClass NMDeviceVxlanClass;
 
 GType nm_device_vxlan_get_type (void);
-
-NMDevice *nm_device_vxlan_new (NMPlatformLink *platform_device);
 
 G_END_DECLS
 

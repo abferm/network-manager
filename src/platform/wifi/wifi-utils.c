@@ -19,11 +19,11 @@
  * Copyright (C) 2006 - 2008 Novell, Inc.
  */
 
-#include <config.h>
+#include "nm-default.h"
+
 #include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
-#include <glib.h>
 
 #include "wifi-utils.h"
 #include "wifi-utils-private.h"
@@ -70,6 +70,22 @@ wifi_utils_init (const char *iface, int ifindex, gboolean check_scan)
 	return ret;
 }
 
+int
+wifi_utils_get_ifindex (WifiData *data)
+{
+	g_return_val_if_fail (data != NULL, -1);
+
+	return data->ifindex;
+}
+
+const char *
+wifi_utils_get_iface (WifiData *data)
+{
+	g_return_val_if_fail (data != NULL, NULL);
+
+	return data->iface;
+}
+
 NMDeviceWifiCapabilities
 wifi_utils_get_caps (WifiData *data)
 {
@@ -97,6 +113,14 @@ wifi_utils_set_mode (WifiData *data, const NM80211Mode mode)
 	return data->set_mode ? data->set_mode (data, mode) : TRUE;
 }
 
+gboolean
+wifi_utils_set_powersave (WifiData *data, guint32 powersave)
+{
+	g_return_val_if_fail (data != NULL, FALSE);
+
+	return data->set_powersave ? data->set_powersave (data, powersave) : TRUE;
+}
+
 guint32
 wifi_utils_get_freq (WifiData *data)
 {
@@ -112,20 +136,13 @@ wifi_utils_find_freq (WifiData *data, const guint32 *freqs)
 	return data->find_freq (data, freqs);
 }
 
-GByteArray *
-wifi_utils_get_ssid (WifiData *data)
-{
-	g_return_val_if_fail (data != NULL, NULL);
-	return data->get_ssid (data);
-}
-
 gboolean
-wifi_utils_get_bssid (WifiData *data, struct ether_addr *out_bssid)
+wifi_utils_get_bssid (WifiData *data, guint8 *out_bssid)
 {
 	g_return_val_if_fail (data != NULL, FALSE);
 	g_return_val_if_fail (out_bssid != NULL, FALSE);
 
-	memset (out_bssid, 0, sizeof (*out_bssid));
+	memset (out_bssid, 0, ETH_ALEN);
 	return data->get_bssid (data, out_bssid);
 }
 
@@ -175,9 +192,6 @@ wifi_utils_is_wifi (const char *iface, const char *sysfs_path)
 			return TRUE;
 	}
 
-	if (wifi_nl80211_is_wifi (iface))
-		return TRUE;
-
 #if HAVE_WEXT
 	if (wifi_wext_is_wifi (iface))
 		return TRUE;
@@ -207,11 +221,11 @@ wifi_utils_set_mesh_channel (WifiData *data, guint32 channel)
 }
 
 gboolean
-wifi_utils_set_mesh_ssid (WifiData *data, const GByteArray *ssid)
+wifi_utils_set_mesh_ssid (WifiData *data, const guint8 *ssid, gsize len)
 {
 	g_return_val_if_fail (data != NULL, FALSE);
 	g_return_val_if_fail (data->set_mesh_ssid != NULL, FALSE);
-	return data->set_mesh_ssid (data, ssid);
+	return data->set_mesh_ssid (data, ssid, len);
 }
 
 gboolean

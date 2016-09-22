@@ -18,66 +18,154 @@
  *
  */
 
-#include <config.h>
+#include "nm-default.h"
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <sys/stat.h>
-
-#include <glib.h>
-#include <glib/gi18n.h>
+#include <linux/if.h>
 
 #include "nm-dns-dnsmasq.h"
+#include "nm-core-internal.h"
+#include "nm-platform.h"
 #include "nm-utils.h"
-#include "nm-logging.h"
 #include "nm-ip4-config.h"
 #include "nm-ip6-config.h"
-#include "nm-dns-utils.h"
+#include "nm-bus-manager.h"
+#include "NetworkManagerUtils.h"
 
 G_DEFINE_TYPE (NMDnsDnsmasq, nm_dns_dnsmasq, NM_TYPE_DNS_PLUGIN)
 
 #define NM_DNS_DNSMASQ_GET_PRIVATE(o) (G_TYPE_INSTANCE_GET_PRIVATE ((o), NM_TYPE_DNS_DNSMASQ, NMDnsDnsmasqPrivate))
 
 #define PIDFILE NMRUNDIR "/dnsmasq.pid"
-#define CONFFILE NMRUNDIR "/dnsmasq.conf"
 #define CONFDIR NMCONFDIR "/dnsmasq.d"
 
+#define DNSMASQ_DBUS_SERVICE "org.freedesktop.NetworkManager.dnsmasq"
+#define DNSMASQ_DBUS_PATH "/uk/org/thekelleys/dnsmasq"
+
 typedef struct {
-	guint32 foo;
+	GDBusProxy *dnsmasq;
+	GCancellable *dnsmasq_cancellable;
+	GCancellable *update_cancellable;
+	gboolean running;
+
+	GVariant *set_server_ex_args;
 } NMDnsDnsmasqPrivate;
 
-/*******************************************/
+/*****************************************************************************/
 
-static inline const char *
-find_dnsmasq (void)
+#define _NMLOG_DOMAIN         LOGD_DNS
+#define _NMLOG_PREFIX_NAME    "dnsmasq"
+#define _NMLOG(level, ...) \
+    G_STMT_START { \
+        nm_log ((level), _NMLOG_DOMAIN, \
+                "%s[%p]: " _NM_UTILS_MACRO_FIRST(__VA_ARGS__), \
+                _NMLOG_PREFIX_NAME, \
+                (self) \
+                _NM_UTILS_MACRO_REST(__VA_ARGS__)); \
+    } G_STMT_END
+
+/*****************************************************************************/
+
+static char **
+get_ip4_rdns_domains (NMIP4Config *ip4)
 {
-	static const char *paths[] = {
-		DNSMASQ_PATH,
-		"/usr/local/sbin/dnsmasq",
-		"/usr/sbin/dnsmasq",
-		"/sbin/dnsmasq",
-		NULL
-	};
-	const char **binary = paths;
+	char **strv;
+	GPtrArray *domains = NULL;
+	int i;
 
-	while (*binary != NULL) {
-		if (**binary && g_file_test (*binary, G_FILE_TEST_EXISTS))
-			return *binary;
-		binary++;
+	g_return_val_if_fail (ip4 != NULL, NULL);
+
+	domains = g_ptr_array_sized_new (5);
+
+	for (i = 0; i < nm_ip4_config_get_num_addresses (ip4); i++) {
+		const NMPlatformIP4Address *address = nm_ip4_config_get_address (ip4, i);
+
+		nm_utils_get_reverse_dns_domains_ip4 (address->address, address->plen, domains);
 	}
-	return NULL;
+
+	for (i = 0; i < nm_ip4_config_get_num_routes (ip4); i++) {
+		const NMPlatformIP4Route *route = nm_ip4_config_get_route (ip4, i);
+
+		nm_utils_get_reverse_dns_domains_ip4 (route->network, route->plen, domains);
+	}
+
+	/* Terminating NULL so we can use g_strfreev() to free it */
+	g_ptr_array_add (domains, NULL);
+
+	/* Free the array and return NULL if the only element was the ending NULL */
+	strv = (char **) g_ptr_array_free (domains, (domains->len == 1));
+
+	return _nm_utils_strv_cleanup (strv, FALSE, FALSE, TRUE);
+}
+
+static char **
+get_ip6_rdns_domains (NMIP6Config *ip6)
+{
+	char **strv;
+	GPtrArray *domains = NULL;
+	int i;
+
+	g_return_val_if_fail (ip6 != NULL, NULL);
+
+	domains = g_ptr_array_sized_new (5);
+
+	for (i = 0; i < nm_ip6_config_get_num_addresses (ip6); i++) {
+		const NMPlatformIP6Address *address = nm_ip6_config_get_address (ip6, i);
+
+		nm_utils_get_reverse_dns_domains_ip6 (&address->address, address->plen, domains);
+	}
+
+	for (i = 0; i < nm_ip6_config_get_num_routes (ip6); i++) {
+		const NMPlatformIP6Route *route = nm_ip6_config_get_route (ip6, i);
+
+		nm_utils_get_reverse_dns_domains_ip6 (&route->network, route->plen, domains);
+	}
+
+	/* Terminating NULL so we can use g_strfreev() to free it */
+	g_ptr_array_add (domains, NULL);
+
+	/* Free the array and return NULL if the only element was the ending NULL */
+	strv = (char **) g_ptr_array_free (domains, (domains->len == 1));
+
+	return _nm_utils_strv_cleanup (strv, FALSE, FALSE, TRUE);
+}
+
+static void
+add_dnsmasq_nameserver (NMDnsDnsmasq *self,
+                        GVariantBuilder *servers,
+                        const char *ip,
+                        const char *domain)
+{
+	g_return_if_fail (ip);
+
+	_LOGD ("adding nameserver '%s'%s%s%s", ip,
+	       NM_PRINT_FMT_QUOTED (domain, " for domain \"", domain, "\"", ""));
+
+	g_variant_builder_open (servers, G_VARIANT_TYPE ("as"));
+
+	g_variant_builder_add (servers, "s", ip);
+	if (domain)
+		g_variant_builder_add (servers, "s", domain);
+
+	g_variant_builder_close (servers);
 }
 
 static gboolean
-add_ip4_config (GString *str, NMIP4Config *ip4, gboolean split)
+add_ip4_config (NMDnsDnsmasq *self, GVariantBuilder *servers, NMIP4Config *ip4,
+                const char *iface, gboolean split)
 {
-	char buf[INET_ADDRSTRLEN];
+	char buf[INET_ADDRSTRLEN + 1 + IFNAMSIZ];
+	char buf2[INET_ADDRSTRLEN];
 	in_addr_t addr;
 	int nnameservers, i_nameserver, n, i;
 	gboolean added = FALSE;
 
+	g_return_val_if_fail (iface, FALSE);
 	nnameservers = nm_ip4_config_get_num_nameservers (ip4);
 
 	if (split) {
@@ -88,14 +176,16 @@ add_ip4_config (GString *str, NMIP4Config *ip4, gboolean split)
 
 		for (i_nameserver = 0; i_nameserver < nnameservers; i_nameserver++) {
 			addr = nm_ip4_config_get_nameserver (ip4, i_nameserver);
-			nm_utils_inet4_ntop (addr, buf);
+			g_snprintf (buf, sizeof (buf), "%s@%s",
+			            nm_utils_inet4_ntop (addr, buf2), iface);
 
 			/* searches are preferred over domains */
 			n = nm_ip4_config_get_num_searches (ip4);
 			for (i = 0; i < n; i++) {
-				g_string_append_printf (str, "server=/%s/%s\n",
-				                        nm_ip4_config_get_search (ip4, i),
-				                        buf);
+				add_dnsmasq_nameserver (self,
+				                        servers,
+				                        buf,
+				                        nm_ip4_config_get_search (ip4, i));
 				added = TRUE;
 			}
 
@@ -103,9 +193,10 @@ add_ip4_config (GString *str, NMIP4Config *ip4, gboolean split)
 				/* If not searches, use any domains */
 				n = nm_ip4_config_get_num_domains (ip4);
 				for (i = 0; i < n; i++) {
-					g_string_append_printf (str, "server=/%s/%s\n",
-					                        nm_ip4_config_get_domain (ip4, i),
-					                        buf);
+					add_dnsmasq_nameserver (self,
+					                        servers,
+					                        buf,
+					                        nm_ip4_config_get_domain (ip4, i));
 					added = TRUE;
 				}
 			}
@@ -113,21 +204,22 @@ add_ip4_config (GString *str, NMIP4Config *ip4, gboolean split)
 			/* Ensure reverse-DNS works by directing queries for in-addr.arpa
 			 * domains to the split domain's nameserver.
 			 */
-			domains = nm_dns_utils_get_ip4_rdns_domains (ip4);
+			domains = get_ip4_rdns_domains (ip4);
 			if (domains) {
 				for (iter = domains; iter && *iter; iter++)
-					g_string_append_printf (str, "server=/%s/%s\n", *iter, buf);
+					add_dnsmasq_nameserver (self, servers, buf, *iter);
 				g_strfreev (domains);
-				added = TRUE;
 			}
 		}
 	}
 
-	/* If no searches or domains, just add the namservers */
+	/* If no searches or domains, just add the nameservers */
 	if (!added) {
 		for (i = 0; i < nnameservers; i++) {
 			addr = nm_ip4_config_get_nameserver (ip4, i);
-			g_string_append_printf (str, "server=%s\n", nm_utils_inet4_ntop (addr, NULL));
+			g_snprintf (buf, sizeof (buf), "%s@%s",
+			            nm_utils_inet4_ntop (addr, buf2), iface);
+			add_dnsmasq_nameserver (self, servers, buf, NULL);
 		}
 	}
 
@@ -137,40 +229,63 @@ add_ip4_config (GString *str, NMIP4Config *ip4, gboolean split)
 static char *
 ip6_addr_to_string (const struct in6_addr *addr, const char *iface)
 {
-	char *buf;
+	char buf[NM_UTILS_INET_ADDRSTRLEN];
 
-	if (IN6_IS_ADDR_V4MAPPED (addr)) {
-		/* inet_ntop is probably supposed to do this for us, but it doesn't */
-		buf = g_malloc (INET_ADDRSTRLEN);
+	if (IN6_IS_ADDR_V4MAPPED (addr))
 		nm_utils_inet4_ntop (addr->s6_addr32[3], buf);
-	} else if (!iface || !iface[0] || !IN6_IS_ADDR_LINKLOCAL (addr)) {
-		buf = g_malloc (INET6_ADDRSTRLEN);
+	else
 		nm_utils_inet6_ntop (addr, buf);
-	} else {
-		/* If we got a scope identifier, we need use '%' instead of
-		 * '@', since dnsmasq supports '%' in server= addresses
-		 * only since version 2.58 and up
-		 */
-		buf = g_strconcat (nm_utils_inet6_ntop (addr, NULL), "@", iface, NULL);
+
+	/* Need to scope link-local addresses with %<zone-id>. Before dnsmasq 2.58,
+	 * only '@' was supported as delimiter. Since 2.58, '@' and '%' are
+	 * supported. Due to a bug, since 2.73 only '%' works properly as "server"
+	 * address.
+	 */
+	return g_strdup_printf ("%s%c%s",
+	                        buf,
+	                        IN6_IS_ADDR_LINKLOCAL (addr) ? '%' : '@',
+	                        iface);
+}
+
+static void
+add_global_config (NMDnsDnsmasq *self, GVariantBuilder *dnsmasq_servers, const NMGlobalDnsConfig *config)
+{
+	guint i, j;
+
+	g_return_if_fail (config);
+
+	for (i = 0; i < nm_global_dns_config_get_num_domains (config); i++) {
+		NMGlobalDnsDomain *domain = nm_global_dns_config_get_domain (config, i);
+		const char *const *servers = nm_global_dns_domain_get_servers (domain);
+		const char *name = nm_global_dns_domain_get_name (domain);
+
+		g_return_if_fail (name);
+
+		for (j = 0; servers && servers[j]; j++) {
+			if (!strcmp (name, "*"))
+				add_dnsmasq_nameserver (self, dnsmasq_servers, servers[j], NULL);
+			else
+				add_dnsmasq_nameserver (self, dnsmasq_servers, servers[j], name);
+		}
+
 	}
-	return buf;
 }
 
 static gboolean
-add_ip6_config (GString *str, NMIP6Config *ip6, gboolean split)
+add_ip6_config (NMDnsDnsmasq *self, GVariantBuilder *servers, NMIP6Config *ip6,
+                const char *iface, gboolean split)
 {
 	const struct in6_addr *addr;
 	char *buf = NULL;
 	int nnameservers, i_nameserver, n, i;
 	gboolean added = FALSE;
-	const char *iface;
 
+	g_return_val_if_fail (iface, FALSE);
 	nnameservers = nm_ip6_config_get_num_nameservers (ip6);
 
-	iface = g_object_get_data (G_OBJECT (ip6), IP_CONFIG_IFACE_TAG);
-	g_assert (iface);
-
 	if (split) {
+		char **domains, **iter;
+
 		if (nnameservers == 0)
 			return FALSE;
 
@@ -181,9 +296,10 @@ add_ip6_config (GString *str, NMIP6Config *ip6, gboolean split)
 			/* searches are preferred over domains */
 			n = nm_ip6_config_get_num_searches (ip6);
 			for (i = 0; i < n; i++) {
-				g_string_append_printf (str, "server=/%s/%s\n",
-				                        nm_ip6_config_get_search (ip6, i),
-				                        buf);
+				add_dnsmasq_nameserver (self,
+				                        servers,
+				                        buf,
+				                        nm_ip6_config_get_search (ip6, i));
 				added = TRUE;
 			}
 
@@ -191,24 +307,35 @@ add_ip6_config (GString *str, NMIP6Config *ip6, gboolean split)
 				/* If not searches, use any domains */
 				n = nm_ip6_config_get_num_domains (ip6);
 				for (i = 0; i < n; i++) {
-					g_string_append_printf (str, "server=/%s/%s\n",
-					                        nm_ip6_config_get_domain (ip6, i),
-					                        buf);
+					add_dnsmasq_nameserver (self,
+					                        servers,
+					                        buf,
+					                        nm_ip6_config_get_domain (ip6, i));
 					added = TRUE;
 				}
+			}
+
+			/* Ensure reverse-DNS works by directing queries for ip6.arpa
+			 * domains to the split domain's nameserver.
+			 */
+			domains = get_ip6_rdns_domains (ip6);
+			if (domains) {
+				for (iter = domains; iter && *iter; iter++)
+					add_dnsmasq_nameserver (self, servers, buf, *iter);
+				g_strfreev (domains);
 			}
 
 			g_free (buf);
 		}
 	}
 
-	/* If no searches or domains, just add the namservers */
+	/* If no searches or domains, just add the nameservers */
 	if (!added) {
 		for (i = 0; i < nnameservers; i++) {
 			addr = nm_ip6_config_get_nameserver (ip6, i);
 			buf = ip6_addr_to_string (addr, iface);
 			if (buf) {
-				g_string_append_printf (str, "server=%s\n", buf);
+				add_dnsmasq_nameserver (self, servers, buf, NULL);
 				g_free (buf);
 			}
 		}
@@ -218,138 +345,293 @@ add_ip6_config (GString *str, NMIP6Config *ip6, gboolean split)
 }
 
 static gboolean
-update (NMDnsPlugin *plugin,
-        const GSList *vpn_configs,
-        const GSList *dev_configs,
-        const GSList *other_configs,
-        const char *hostname)
+add_ip_config_data (NMDnsDnsmasq *self, GVariantBuilder *servers, const NMDnsIPConfigData *data)
 {
-	NMDnsDnsmasq *self = NM_DNS_DNSMASQ (plugin);
-	GString *conf;
-	GSList *iter;
+	if (NM_IS_IP4_CONFIG (data->config)) {
+		return add_ip4_config (self,
+		                       servers,
+		                       (NMIP4Config *) data->config,
+		                       data->iface,
+		                       data->type == NM_DNS_IP_CONFIG_TYPE_VPN);
+	} else if (NM_IS_IP6_CONFIG (data->config)) {
+		return add_ip6_config (self,
+		                       servers,
+		                       (NMIP6Config *) data->config,
+		                       data->iface,
+		                       data->type == NM_DNS_IP_CONFIG_TYPE_VPN);
+	} else
+		g_return_val_if_reached (FALSE);
+}
+
+static void
+dnsmasq_clear_cache_done (GDBusProxy *proxy, GAsyncResult *res, gpointer user_data)
+{
+	NMDnsDnsmasq *self;
+	gs_free_error GError *error = NULL;
+	gs_unref_variant GVariant *response = NULL;
+
+	response = g_dbus_proxy_call_finish (proxy, res, &error);
+	if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+		return;
+
+	self = NM_DNS_DNSMASQ (user_data);
+
+	if (!response)
+		_LOGW ("dnsmasq cache clear failed: %s", error->message);
+	else
+		_LOGD ("dnsmasq update successful, cache cleared");
+}
+
+static void
+dnsmasq_update_done (GDBusProxy *proxy, GAsyncResult *res, gpointer user_data)
+{
+	NMDnsDnsmasq *self;
+	NMDnsDnsmasqPrivate *priv;
+	gs_free_error GError *error = NULL;
+	gs_unref_variant GVariant *response = NULL;
+
+	response = g_dbus_proxy_call_finish (proxy, res, &error);
+	if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+		return;
+
+	self = NM_DNS_DNSMASQ (user_data);
+	priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
+
+	if (!response)
+		_LOGW ("dnsmasq update failed: %s", error->message);
+	else {
+		g_dbus_proxy_call (priv->dnsmasq,
+		                   "ClearCache",
+		                   NULL,
+		                   G_DBUS_CALL_FLAGS_NONE,
+		                   -1,
+		                   priv->update_cancellable,
+		                   (GAsyncReadyCallback) dnsmasq_clear_cache_done,
+		                   self);
+	}
+}
+
+static void
+send_dnsmasq_update (NMDnsDnsmasq *self)
+{
+	NMDnsDnsmasqPrivate *priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
+
+	if (!priv->set_server_ex_args)
+		return;
+
+	if (priv->running) {
+		_LOGD ("trying to update dnsmasq nameservers");
+
+		nm_clear_g_cancellable (&priv->update_cancellable);
+		priv->update_cancellable = g_cancellable_new ();
+
+		g_dbus_proxy_call (priv->dnsmasq,
+		                   "SetServersEx",
+		                   priv->set_server_ex_args,
+		                   G_DBUS_CALL_FLAGS_NONE,
+		                   -1,
+		                   priv->update_cancellable,
+		                   (GAsyncReadyCallback) dnsmasq_update_done,
+		                   self);
+		g_clear_pointer (&priv->set_server_ex_args, g_variant_unref);
+	} else
+		_LOGD ("dnsmasq not found on the bus. The nameserver update will be sent when dnsmasq appears");
+}
+
+static void
+name_owner_changed (GObject    *object,
+                    GParamSpec *pspec,
+                    gpointer    user_data)
+{
+	NMDnsDnsmasq *self = NM_DNS_DNSMASQ (user_data);
+	NMDnsDnsmasqPrivate *priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
+	gs_free char *owner = NULL;
+
+	owner = g_dbus_proxy_get_name_owner (G_DBUS_PROXY (object));
+	if (owner) {
+		_LOGI ("dnsmasq appeared as %s", owner);
+		priv->running = TRUE;
+		send_dnsmasq_update (self);
+	} else {
+		_LOGI ("dnsmasq disappeared");
+		priv->running = FALSE;
+		g_signal_emit_by_name (self, NM_DNS_PLUGIN_FAILED);
+	}
+}
+
+static void
+dnsmasq_proxy_cb (GObject *source, GAsyncResult *res, gpointer user_data)
+{
+	NMDnsDnsmasq *self;
+	NMDnsDnsmasqPrivate *priv;
+	gs_free_error GError *error = NULL;
+	gs_free char *owner = NULL;
+	GDBusProxy *proxy;
+
+	proxy = g_dbus_proxy_new_finish (res, &error);
+	if (   !proxy
+	    && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+		return;
+
+	self = NM_DNS_DNSMASQ (user_data);
+
+	if (!proxy) {
+		_LOGW ("failed to connect to dnsmasq via DBus: %s", error->message);
+		g_signal_emit_by_name (self, NM_DNS_PLUGIN_FAILED);
+		return;
+	}
+
+	priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
+
+	priv->dnsmasq = proxy;
+	nm_clear_g_cancellable (&priv->dnsmasq_cancellable);
+
+	_LOGD ("dnsmasq proxy creation successful");
+
+	g_signal_connect (priv->dnsmasq, "notify::g-name-owner",
+	                  G_CALLBACK (name_owner_changed), self);
+	owner = g_dbus_proxy_get_name_owner (priv->dnsmasq);
+	priv->running = (owner != NULL);
+
+	if (priv->running)
+		send_dnsmasq_update (self);
+}
+
+static void
+start_dnsmasq (NMDnsDnsmasq *self)
+{
+	NMDnsDnsmasqPrivate *priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
+	const char *dm_binary;
 	const char *argv[15];
-	GError *error = NULL;
-	int ignored;
 	GPid pid = 0;
 	guint idx = 0;
+	NMBusManager *dbus_mgr;
+	GDBusConnection *connection;
 
-	/* Kill the old dnsmasq; there doesn't appear to be a way to get dnsmasq
-	 * to reread the config file using SIGHUP or similar.  This is a small race
-	 * here when restarting dnsmasq when DNS requests could go to the upstream
-	 * servers instead of to dnsmasq.
-	 */
-	nm_dns_plugin_child_kill (plugin);
-
-	/* Build up the new dnsmasq config file */
-	conf = g_string_sized_new (150);
-
-	/* Use split DNS for VPN configs */
-	for (iter = (GSList *) vpn_configs; iter; iter = g_slist_next (iter)) {
-		if (NM_IS_IP4_CONFIG (iter->data))
-			add_ip4_config (conf, NM_IP4_CONFIG (iter->data), TRUE);
-		else if (NM_IS_IP6_CONFIG (iter->data))
-			add_ip6_config (conf, NM_IP6_CONFIG (iter->data), TRUE);
+	if (priv->running) {
+		/* the dnsmasq process is running. Nothing to do. */
+		return;
 	}
 
-	/* Now add interface configs without split DNS */
-	for (iter = (GSList *) dev_configs; iter; iter = g_slist_next (iter)) {
-		if (NM_IS_IP4_CONFIG (iter->data))
-			add_ip4_config (conf, NM_IP4_CONFIG (iter->data), FALSE);
-		else if (NM_IS_IP6_CONFIG (iter->data))
-			add_ip6_config (conf, NM_IP6_CONFIG (iter->data), FALSE);
+	if (nm_dns_plugin_child_pid ((NMDnsPlugin *) self) > 0) {
+		/* if we already have a child process spawned, don't do
+		 * it again. */
+		return;
 	}
 
-	/* And any other random configs */
-	for (iter = (GSList *) other_configs; iter; iter = g_slist_next (iter)) {
-		if (NM_IS_IP4_CONFIG (iter->data))
-			add_ip4_config (conf, NM_IP4_CONFIG (iter->data), FALSE);
-		else if (NM_IS_IP6_CONFIG (iter->data))
-			add_ip6_config (conf, NM_IP6_CONFIG (iter->data), FALSE);
+	dm_binary = nm_utils_find_helper ("dnsmasq", DNSMASQ_PATH, NULL);
+	if (!dm_binary) {
+		_LOGW ("could not find dnsmasq binary");
+		return;
 	}
 
-	/* Write out the config file */
-	if (!g_file_set_contents (CONFFILE, conf->str, -1, &error)) {
-		nm_log_warn (LOGD_DNS, "Failed to write dnsmasq config file %s: (%d) %s",
-		             CONFFILE,
-		             error ? error->code : -1,
-		             error && error->message ? error->message : "(unknown)");
-		g_clear_error (&error);
-		goto out;
-	}
-	ignored = chmod (CONFFILE, 0644);
-
-	nm_log_dbg (LOGD_DNS, "dnsmasq local caching DNS configuration:");
-	nm_log_dbg (LOGD_DNS, "%s", conf->str);
-
-	argv[idx++] = find_dnsmasq ();
+	argv[idx++] = dm_binary;
 	argv[idx++] = "--no-resolv";  /* Use only commandline */
 	argv[idx++] = "--keep-in-foreground";
 	argv[idx++] = "--no-hosts"; /* don't use /etc/hosts to resolve */
 	argv[idx++] = "--bind-interfaces";
 	argv[idx++] = "--pid-file=" PIDFILE;
 	argv[idx++] = "--listen-address=127.0.0.1"; /* Should work for both 4 and 6 */
-	argv[idx++] = "--conf-file=" CONFFILE;
 	argv[idx++] = "--cache-size=400";
+	argv[idx++] = "--conf-file=/dev/null"; /* avoid loading /etc/dnsmasq.conf */
 	argv[idx++] = "--proxy-dnssec"; /* Allow DNSSEC to pass through */
+	argv[idx++] = "--enable-dbus=" DNSMASQ_DBUS_SERVICE;
 
 	/* dnsmasq exits if the conf dir is not present */
 	if (g_file_test (CONFDIR, G_FILE_TEST_IS_DIR))
 		argv[idx++] = "--conf-dir=" CONFDIR;
 
 	argv[idx++] = NULL;
-	g_warn_if_fail (idx <= G_N_ELEMENTS (argv));
+	nm_assert (idx <= G_N_ELEMENTS (argv));
 
 	/* And finally spawn dnsmasq */
 	pid = nm_dns_plugin_child_spawn (NM_DNS_PLUGIN (self), argv, PIDFILE, "bin/dnsmasq");
+	if (!pid)
+		return;
 
-out:
-	g_string_free (conf, TRUE);
-	return pid ? TRUE : FALSE;
+	if (   priv->dnsmasq
+	    || priv->dnsmasq_cancellable) {
+		/* we already have a proxy or are about to create it.
+		 * We are done. */
+		return;
+	}
+
+	dbus_mgr = nm_bus_manager_get ();
+	g_return_if_fail (dbus_mgr);
+
+	connection = nm_bus_manager_get_connection (dbus_mgr);
+	g_return_if_fail (connection);
+
+	priv->dnsmasq_cancellable = g_cancellable_new ();
+	g_dbus_proxy_new (connection,
+	                  G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START,
+	                  NULL,
+	                  DNSMASQ_DBUS_SERVICE,
+	                  DNSMASQ_DBUS_PATH,
+	                  DNSMASQ_DBUS_SERVICE,
+	                  priv->dnsmasq_cancellable,
+	                  dnsmasq_proxy_cb,
+	                  self);
+}
+
+static gboolean
+update (NMDnsPlugin *plugin,
+        const NMDnsIPConfigData **configs,
+        const NMGlobalDnsConfig *global_config,
+        const char *hostname)
+{
+	NMDnsDnsmasq *self = NM_DNS_DNSMASQ (plugin);
+	NMDnsDnsmasqPrivate *priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
+	GVariantBuilder servers;
+
+	start_dnsmasq (self);
+
+	g_variant_builder_init (&servers, G_VARIANT_TYPE ("aas"));
+
+	if (global_config)
+		add_global_config (self, &servers, global_config);
+	else {
+		while (*configs) {
+			add_ip_config_data (self, &servers, *configs);
+			configs++;
+		}
+	}
+
+	g_clear_pointer (&priv->set_server_ex_args, g_variant_unref);
+	priv->set_server_ex_args = g_variant_ref_sink (g_variant_new ("(aas)", &servers));
+
+	send_dnsmasq_update (self);
+
+	return TRUE;
 }
 
 /****************************************************************/
-
-static const char *
-dm_exit_code_to_msg (int status)
-{
-	if (status == 1)
-		return "Configuration problem";
-	else if (status == 2)
-		return "Network access problem (address in use; permissions; etc)";
-	else if (status == 3)
-		return "Filesystem problem (missing file/directory; permissions; etc)";
-	else if (status == 4)
-		return "Memory allocation failure";
-	else if (status == 5)
-		return "Other problem";
-	else if (status >= 11)
-		return "Lease-script 'init' process failure";
-	return "Unknown error";
-}
 
 static void
 child_quit (NMDnsPlugin *plugin, gint status)
 {
 	NMDnsDnsmasq *self = NM_DNS_DNSMASQ (plugin);
+	NMDnsDnsmasqPrivate *priv = NM_DNS_DNSMASQ_GET_PRIVATE (self);
 	gboolean failed = TRUE;
 	int err;
 
 	if (WIFEXITED (status)) {
 		err = WEXITSTATUS (status);
 		if (err) {
-			nm_log_warn (LOGD_DNS, "dnsmasq exited with error: %s (%d)",
-			             dm_exit_code_to_msg (err),
-			             err);
-		} else
+			_LOGW ("dnsmasq exited with error: %s",
+			       nm_utils_dnsmasq_status_to_string (err, NULL, 0));
+		} else {
+			_LOGD ("dnsmasq exited normally");
 			failed = FALSE;
-	} else if (WIFSTOPPED (status)) {
-		nm_log_warn (LOGD_DNS, "dnsmasq stopped unexpectedly with signal %d", WSTOPSIG (status));
-	} else if (WIFSIGNALED (status)) {
-		nm_log_warn (LOGD_DNS, "dnsmasq died with signal %d", WTERMSIG (status));
-	} else {
-		nm_log_warn (LOGD_DNS, "dnsmasq died from an unknown cause");
-	}
-	unlink (CONFFILE);
+		}
+	} else if (WIFSTOPPED (status))
+		_LOGW ("dnsmasq stopped unexpectedly with signal %d", WSTOPSIG (status));
+	else if (WIFSIGNALED (status))
+		_LOGW ("dnsmasq died with signal %d", WTERMSIG (status));
+	else
+		_LOGW ("dnsmasq died from an unknown cause");
+
+	priv->running = FALSE;
 
 	if (failed)
 		g_signal_emit_by_name (self, NM_DNS_PLUGIN_FAILED);
@@ -385,7 +667,14 @@ nm_dns_dnsmasq_init (NMDnsDnsmasq *self)
 static void
 dispose (GObject *object)
 {
-	unlink (CONFFILE);
+	NMDnsDnsmasqPrivate *priv = NM_DNS_DNSMASQ_GET_PRIVATE (object);
+
+	nm_clear_g_cancellable (&priv->dnsmasq_cancellable);
+	nm_clear_g_cancellable (&priv->update_cancellable);
+
+	g_clear_object (&priv->dnsmasq);
+
+	g_clear_pointer (&priv->set_server_ex_args, g_variant_unref);
 
 	G_OBJECT_CLASS (nm_dns_dnsmasq_parent_class)->dispose (object);
 }

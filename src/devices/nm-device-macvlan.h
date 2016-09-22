@@ -18,12 +18,10 @@
  * Copyright 2013 Red Hat, Inc.
  */
 
-#ifndef NM_DEVICE_MACVLAN_H
-#define NM_DEVICE_MACVLAN_H
+#ifndef __NETWORKMANAGER_DEVICE_MACVLAN_H__
+#define __NETWORKMANAGER_DEVICE_MACVLAN_H__
 
-#include <glib-object.h>
-
-#include "nm-device-generic.h"
+#include "nm-device.h"
 
 G_BEGIN_DECLS
 
@@ -37,19 +35,12 @@ G_BEGIN_DECLS
 #define NM_DEVICE_MACVLAN_PARENT     "parent"
 #define NM_DEVICE_MACVLAN_MODE       "mode"
 #define NM_DEVICE_MACVLAN_NO_PROMISC "no-promisc"
+#define NM_DEVICE_MACVLAN_TAP        "tap"
 
-typedef struct {
-	NMDeviceGeneric parent;
-} NMDeviceMacvlan;
-
-typedef struct {
-	NMDeviceGenericClass parent;
-
-} NMDeviceMacvlanClass;
+typedef NMDevice NMDeviceMacvlan;
+typedef NMDeviceClass NMDeviceMacvlanClass;
 
 GType nm_device_macvlan_get_type (void);
-
-NMDevice *nm_device_macvlan_new (NMPlatformLink *platform_device);
 
 G_END_DECLS
 

@@ -18,21 +18,22 @@
  * Copyright (C) 2008 - 2011 Red Hat, Inc.
  */
 
+#include "nm-default.h"
+
 #include <string.h>
-#include <net/ethernet.h>
-#include <netinet/ether.h>
 
 #include <glib/gstdio.h>
 
-#include <NetworkManager.h>
-#include <nm-setting-connection.h>
-#include <nm-setting-wired.h>
-#include <nm-setting-wireless.h>
-#include <nm-setting-gsm.h>
-#include <nm-setting-cdma.h>
-#include <nm-setting-pppoe.h>
-#include <nm-setting-wireless-security.h>
-#include <nm-setting-8021x.h>
+#include "nm-dbus-interface.h"
+#include "nm-setting-connection.h"
+#include "nm-setting-wired.h"
+#include "nm-setting-wireless.h"
+#include "nm-setting-gsm.h"
+#include "nm-setting-cdma.h"
+#include "nm-setting-pppoe.h"
+#include "nm-setting-wireless-security.h"
+#include "nm-setting-8021x.h"
+#include "nm-platform.h"
 
 #include "common.h"
 #include "nm-config.h"
@@ -49,7 +50,6 @@ G_DEFINE_TYPE (NMIfcfgConnection, nm_ifcfg_connection, NM_TYPE_SETTINGS_CONNECTI
 typedef struct {
 	gulong ih_event_id;
 
-	char *path;
 	int file_wd;
 
 	char *keyfile;
@@ -63,6 +63,11 @@ typedef struct {
 
 	char *unmanaged_spec;
 	char *unrecognized_spec;
+
+	gulong devtimeout_link_changed_handler;
+	guint devtimeout_timeout_id;
+
+	NMInotifyHelper *inotify_helper;
 } NMIfcfgConnectionPrivate;
 
 enum {
@@ -79,6 +84,112 @@ enum {
 };
 
 static guint signals[LAST_SIGNAL] = { 0 };
+
+static NMInotifyHelper *
+_get_inotify_helper (NMIfcfgConnectionPrivate *priv)
+{
+	if (!priv->inotify_helper)
+		priv->inotify_helper = g_object_ref (nm_inotify_helper_get ());
+	return priv->inotify_helper;
+}
+
+static gboolean
+devtimeout_ready (gpointer user_data)
+{
+	NMIfcfgConnection *self = user_data;
+	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (self);
+
+	priv->devtimeout_timeout_id = 0;
+	nm_settings_connection_set_ready (NM_SETTINGS_CONNECTION (self), TRUE);
+	return FALSE;
+}
+
+static void
+link_changed (NMPlatform *platform, NMPObjectType *obj_type, int ifindex, const NMPlatformLink *link,
+              NMPlatformSignalChangeType change_type,
+              NMConnection *self)
+{
+	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (self);
+	const char *ifname;
+
+	ifname = nm_connection_get_interface_name (self);
+	if (g_strcmp0 (link->name, ifname) != 0)
+		return;
+
+	/* Shouldn't happen, but... */
+	if (change_type == NM_PLATFORM_SIGNAL_REMOVED)
+		return;
+
+	nm_log_info (LOGD_SETTINGS, "Device %s appeared; connection '%s' now ready",
+	             ifname, nm_connection_get_id (self));
+
+	g_signal_handler_disconnect (platform, priv->devtimeout_link_changed_handler);
+	priv->devtimeout_link_changed_handler = 0;
+	g_source_remove (priv->devtimeout_timeout_id);
+
+	/* Don't declare the connection ready right away, since NMManager may not have
+	 * started processing the device yet.
+	 */
+	priv->devtimeout_timeout_id = g_idle_add (devtimeout_ready, self);
+}
+
+static gboolean
+devtimeout_expired (gpointer user_data)
+{
+	NMIfcfgConnection *self = user_data;
+	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (self);
+
+	nm_log_info (LOGD_SETTINGS, "Device for connection '%s' did not appear before timeout",
+	             nm_connection_get_id (NM_CONNECTION (self)));
+
+	g_signal_handler_disconnect (NM_PLATFORM_GET, priv->devtimeout_link_changed_handler);
+	priv->devtimeout_link_changed_handler = 0;
+	priv->devtimeout_timeout_id = 0;
+
+	nm_settings_connection_set_ready (NM_SETTINGS_CONNECTION (self), TRUE);
+	return FALSE;
+}
+
+static void
+nm_ifcfg_connection_check_devtimeout (NMIfcfgConnection *self)
+{
+	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (self);
+	NMSettingConnection *s_con;
+	const char *ifname;
+	const char *filename;
+	guint devtimeout;
+	const NMPlatformLink *pllink;
+
+	s_con = nm_connection_get_setting_connection (NM_CONNECTION (self));
+
+	if (!nm_setting_connection_get_autoconnect (s_con))
+		return;
+	ifname = nm_setting_connection_get_interface_name (s_con);
+	if (!ifname)
+		return;
+	filename = nm_settings_connection_get_filename (NM_SETTINGS_CONNECTION (self));
+	if (!filename)
+		return;
+
+	pllink = nm_platform_link_get_by_ifname (NM_PLATFORM_GET, ifname);
+	if (pllink && pllink->initialized)
+		return;
+
+	devtimeout = devtimeout_from_file (filename);
+	if (!devtimeout)
+		return;
+
+	/* ONBOOT=yes, DEVICE and DEVTIMEOUT are set, but device is not present */
+	nm_settings_connection_set_ready (NM_SETTINGS_CONNECTION (self), FALSE);
+
+	nm_log_info (LOGD_SETTINGS, "Waiting %u seconds for %s to appear for connection '%s'",
+	             devtimeout, ifname, nm_connection_get_id (NM_CONNECTION (self)));
+
+	priv->devtimeout_link_changed_handler =
+		g_signal_connect (NM_PLATFORM_GET, NM_PLATFORM_SIGNAL_LINK_CHANGED,
+		                  G_CALLBACK (link_changed), self);
+	priv->devtimeout_timeout_id = g_timeout_add_seconds (devtimeout, devtimeout_expired, self);
+}
 
 static void
 files_changed_cb (NMInotifyHelper *ih,
@@ -103,7 +214,7 @@ NMIfcfgConnection *
 nm_ifcfg_connection_new (NMConnection *source,
                          const char *full_path,
                          GError **error,
-                         gboolean *ignore_error)
+                         gboolean *out_ignore_error)
 {
 	GObject *object;
 	NMConnection *tmp;
@@ -113,22 +224,17 @@ nm_ifcfg_connection_new (NMConnection *source,
 
 	g_assert (source || full_path);
 
+	if (out_ignore_error)
+		*out_ignore_error = FALSE;
+
 	/* If we're given a connection already, prefer that instead of re-reading */
 	if (source)
 		tmp = g_object_ref (source);
 	else {
-		char *keyfile = NULL, *routefile = NULL, *route6file = NULL;
-
-		tmp = connection_from_file (full_path, NULL, NULL, NULL,
+		tmp = connection_from_file (full_path,
 		                            &unhandled_spec,
-		                            &keyfile,
-		                            &routefile,
-		                            &route6file,
 		                            error,
-		                            ignore_error);
-		g_free (keyfile);
-		g_free (routefile);
-		g_free (route6file);
+		                            out_ignore_error);
 		if (!tmp)
 			return NULL;
 
@@ -142,35 +248,23 @@ nm_ifcfg_connection_new (NMConnection *source,
 		unrecognized_spec = unhandled_spec + strlen ("unrecognized:");
 
 	object = (GObject *) g_object_new (NM_TYPE_IFCFG_CONNECTION,
+	                                   NM_SETTINGS_CONNECTION_FILENAME, full_path,
 	                                   NM_IFCFG_CONNECTION_UNMANAGED_SPEC, unmanaged_spec,
 	                                   NM_IFCFG_CONNECTION_UNRECOGNIZED_SPEC, unrecognized_spec,
 	                                   NULL);
-	if (object) {
-		/* Update our settings with what was read from the file */
-		if (nm_settings_connection_replace_settings (NM_SETTINGS_CONNECTION (object),
-		                                             tmp,
-		                                             update_unsaved,
-		                                             error)) {
-			/* Set the path and start monitoring */
-			if (full_path)
-				nm_ifcfg_connection_set_path (NM_IFCFG_CONNECTION (object), full_path);
-		} else {
-			g_object_unref (object);
-			object = NULL;
-		}
-	}
+	/* Update our settings with what was read from the file */
+	if (nm_settings_connection_replace_settings (NM_SETTINGS_CONNECTION (object),
+	                                             tmp,
+	                                             update_unsaved,
+	                                             NULL,
+	                                             error))
+		nm_ifcfg_connection_check_devtimeout (NM_IFCFG_CONNECTION (object));
+	else
+		g_clear_object (&object);
 
 	g_object_unref (tmp);
 	g_free (unhandled_spec);
 	return (NMIfcfgConnection *) object;
-}
-
-const char *
-nm_ifcfg_connection_get_path (NMIfcfgConnection *self)
-{
-	g_return_val_if_fail (NM_IS_IFCFG_CONNECTION (self), NULL);
-
-	return NM_IFCFG_CONNECTION_GET_PRIVATE (self)->path;
 }
 
 static void
@@ -179,12 +273,9 @@ path_watch_stop (NMIfcfgConnection *self)
 	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (self);
 	NMInotifyHelper *ih;
 
-	ih = nm_inotify_helper_get ();
+	ih = _get_inotify_helper (priv);
 
-	if (priv->ih_event_id) {
-		g_signal_handler_disconnect (ih, priv->ih_event_id);
-		priv->ih_event_id = 0;
-	}
+	nm_clear_g_signal_handler (ih, &priv->ih_event_id);
 
 	if (priv->file_wd >= 0) {
 		nm_inotify_helper_remove_watch (ih, priv->file_wd);
@@ -213,23 +304,29 @@ path_watch_stop (NMIfcfgConnection *self)
 	}
 }
 
-void
-nm_ifcfg_connection_set_path (NMIfcfgConnection *self, const char *ifcfg_path)
+static void
+filename_changed (GObject *object,
+                  GParamSpec *pspec,
+                  gpointer user_data)
 {
+	NMIfcfgConnection *self = NM_IFCFG_CONNECTION (object);
 	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (self);
-
-	g_return_if_fail (ifcfg_path != NULL);
+	const char *ifcfg_path;
 
 	path_watch_stop (self);
-	g_free (priv->path);
 
-	priv->path = g_strdup (ifcfg_path);
+	ifcfg_path = nm_settings_connection_get_filename (NM_SETTINGS_CONNECTION (self));
+	if (!ifcfg_path)
+		return;
+
 	priv->keyfile = utils_get_keys_path (ifcfg_path);
 	priv->routefile = utils_get_route_path (ifcfg_path);
 	priv->route6file = utils_get_route6_path (ifcfg_path);
 
 	if (nm_config_get_monitor_connection_files (nm_config_get ())) {
-		NMInotifyHelper *ih = nm_inotify_helper_get ();
+		NMInotifyHelper *ih;
+
+		ih = _get_inotify_helper (priv);
 
 		priv->ih_event_id = g_signal_connect (ih, "event", G_CALLBACK (files_changed_cb), self);
 		priv->file_wd = nm_inotify_helper_add_watch (ih, ifcfg_path);
@@ -256,7 +353,31 @@ nm_ifcfg_connection_get_unrecognized_spec (NMIfcfgConnection *self)
 }
 
 static void
+replace_and_commit (NMSettingsConnection *connection,
+                    NMConnection *new_connection,
+                    NMSettingsConnectionCommitFunc callback,
+                    gpointer user_data)
+{
+	const char *filename;
+	GError *error = NULL;
+
+	filename = nm_settings_connection_get_filename (connection);
+	if (filename && utils_has_complex_routes (filename)) {
+		if (callback) {
+			error = g_error_new_literal (NM_SETTINGS_ERROR, NM_SETTINGS_ERROR_FAILED,
+			                             "Cannot modify a connection that has an associated 'rule-' or 'rule6-' file");
+			callback (connection, error, user_data);
+			g_clear_error (&error);
+		}
+		return;
+	}
+
+	NM_SETTINGS_CONNECTION_CLASS (nm_ifcfg_connection_parent_class)->replace_and_commit (connection, new_connection, callback, user_data);
+}
+
+static void
 commit_changes (NMSettingsConnection *connection,
+                NMSettingsConnectionCommitReason commit_reason,
                 NMSettingsConnectionCommitFunc callback,
                 gpointer user_data)
 {
@@ -265,16 +386,15 @@ commit_changes (NMSettingsConnection *connection,
 	NMConnection *reread;
 	gboolean same = FALSE, success = FALSE;
 	char *ifcfg_path = NULL;
+	const char *filename;
 
 	/* To ensure we don't rewrite files that are only changed from other
 	 * processes on-disk, read the existing connection back in and only rewrite
 	 * it if it's really changed.
 	 */
-	if (priv->path) {
-		reread = connection_from_file (priv->path, NULL, NULL, NULL,
-		                               NULL, NULL, NULL, NULL,
-		                               &error, NULL);
-		g_clear_error (&error);
+	filename = nm_settings_connection_get_filename (connection);
+	if (filename) {
+		reread = connection_from_file (filename, NULL, NULL, NULL);
 		if (reread) {
 			same = nm_connection_compare (NM_CONNECTION (connection),
 			                              reread,
@@ -285,14 +405,14 @@ commit_changes (NMSettingsConnection *connection,
 			/* Don't bother writing anything out if in-memory and on-disk data are the same */
 			if (same) {
 				/* But chain up to parent to handle success - emits updated signal */
-				NM_SETTINGS_CONNECTION_CLASS (nm_ifcfg_connection_parent_class)->commit_changes (connection, callback, user_data);
+				NM_SETTINGS_CONNECTION_CLASS (nm_ifcfg_connection_parent_class)->commit_changes (connection, commit_reason, callback, user_data);
 				return;
 			}
 		}
 
 		success = writer_update_connection (NM_CONNECTION (connection),
 		                                    IFCFG_DIR,
-		                                    priv->path,
+		                                    filename,
 		                                    priv->keyfile,
 		                                    &error);
 	} else {
@@ -301,14 +421,14 @@ commit_changes (NMSettingsConnection *connection,
 		                                 &ifcfg_path,
 		                                 &error);
 		if (success) {
-			nm_ifcfg_connection_set_path (NM_IFCFG_CONNECTION (connection), ifcfg_path);
+			nm_settings_connection_set_filename (connection, ifcfg_path);
 			g_free (ifcfg_path);
 		}
 	}
 
 	if (success) {
 		/* Chain up to parent to handle success */
-		NM_SETTINGS_CONNECTION_CLASS (nm_ifcfg_connection_parent_class)->commit_changes (connection, callback, user_data);
+		NM_SETTINGS_CONNECTION_CLASS (nm_ifcfg_connection_parent_class)->commit_changes (connection, commit_reason, callback, user_data);
 	} else {
 		/* Otherwise immediate error */
 		callback (connection, error, user_data);
@@ -322,14 +442,15 @@ do_delete (NMSettingsConnection *connection,
 	       gpointer user_data)
 {
 	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (connection);
+	const char *filename;
 
-	if (priv->path) {
-		g_unlink (priv->path);
+	filename = nm_settings_connection_get_filename (connection);
+	if (filename) {
+		g_unlink (filename);
 		if (priv->keyfile)
 			g_unlink (priv->keyfile);
 		if (priv->routefile)
 			g_unlink (priv->routefile);
-
 		if (priv->route6file)
 			g_unlink (priv->route6file);
 	}
@@ -342,17 +463,8 @@ do_delete (NMSettingsConnection *connection,
 static void
 nm_ifcfg_connection_init (NMIfcfgConnection *connection)
 {
-}
-
-static void
-finalize (GObject *object)
-{
-	nm_connection_clear_secrets (NM_CONNECTION (object));
-
-	path_watch_stop (NM_IFCFG_CONNECTION (object));
-	g_free (NM_IFCFG_CONNECTION_GET_PRIVATE (object)->path);
-
-	G_OBJECT_CLASS (nm_ifcfg_connection_parent_class)->finalize (object);
+	g_signal_connect (connection, "notify::" NM_SETTINGS_CONNECTION_FILENAME,
+	                  G_CALLBACK (filename_changed), NULL);
 }
 
 static void
@@ -394,6 +506,24 @@ get_property (GObject *object, guint prop_id,
 }
 
 static void
+dispose (GObject *object)
+{
+	NMIfcfgConnectionPrivate *priv = NM_IFCFG_CONNECTION_GET_PRIVATE (object);
+
+	path_watch_stop (NM_IFCFG_CONNECTION (object));
+
+	nm_clear_g_signal_handler (NM_PLATFORM_GET, &priv->devtimeout_link_changed_handler);
+	nm_clear_g_source (&priv->devtimeout_timeout_id);
+
+	g_clear_object (&priv->inotify_helper);
+
+	g_clear_pointer (&priv->unmanaged_spec, g_free);
+	g_clear_pointer (&priv->unrecognized_spec, g_free);
+
+	G_OBJECT_CLASS (nm_ifcfg_connection_parent_class)->dispose (object);
+}
+
+static void
 nm_ifcfg_connection_class_init (NMIfcfgConnectionClass *ifcfg_connection_class)
 {
 	GObjectClass *object_class = G_OBJECT_CLASS (ifcfg_connection_class);
@@ -404,25 +534,24 @@ nm_ifcfg_connection_class_init (NMIfcfgConnectionClass *ifcfg_connection_class)
 	/* Virtual methods */
 	object_class->set_property = set_property;
 	object_class->get_property = get_property;
-	object_class->finalize     = finalize;
+	object_class->dispose      = dispose;
 	settings_class->delete = do_delete;
+	settings_class->replace_and_commit = replace_and_commit;
 	settings_class->commit_changes = commit_changes;
 
 	/* Properties */
 	g_object_class_install_property
 		(object_class, PROP_UNMANAGED_SPEC,
-		 g_param_spec_string (NM_IFCFG_CONNECTION_UNMANAGED_SPEC,
-						  "Unmanaged spec",
-						  "Unmanaged spec",
-						  NULL,
-						  G_PARAM_READWRITE));
+		 g_param_spec_string (NM_IFCFG_CONNECTION_UNMANAGED_SPEC, "", "",
+		                      NULL,
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS));
 	g_object_class_install_property
 		(object_class, PROP_UNRECOGNIZED_SPEC,
-		 g_param_spec_string (NM_IFCFG_CONNECTION_UNRECOGNIZED_SPEC,
-		                      "Unrecognized spec",
-		                      "Unrecognized spec",
+		 g_param_spec_string (NM_IFCFG_CONNECTION_UNRECOGNIZED_SPEC, "", "",
 		                      NULL,
-		                      G_PARAM_READWRITE));
+		                      G_PARAM_READWRITE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	signals[IFCFG_CHANGED] =
 		g_signal_new ("ifcfg-changed",

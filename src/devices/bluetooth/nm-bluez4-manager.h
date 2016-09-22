@@ -19,14 +19,11 @@
  * Copyright (C) 2007 - 2013 Red Hat, Inc.
  */
 
-#ifndef NM_BLUEZ4_MANAGER_H
-#define NM_BLUEZ4_MANAGER_H
+#ifndef __NETWORKMANAGER_BLUEZ4_MANAGER_H__
+#define __NETWORKMANAGER_BLUEZ4_MANAGER_H__
 
-#include <glib.h>
-#include <glib-object.h>
-
-#include  <config.h>
-#include  "nm-connection-provider.h"
+#include "nm-default.h"
+#include "nm-connection-provider.h"
 
 G_BEGIN_DECLS
 
@@ -58,5 +55,5 @@ NMBluez4Manager *nm_bluez4_manager_new (NMConnectionProvider *provider);
 
 void nm_bluez4_manager_query_devices (NMBluez4Manager *manager);
 
-#endif /* NM_BLUEZ4_MANAGER_H */
+#endif /* __NETWORKMANAGER_BLUEZ4_MANAGER_H__ */
 

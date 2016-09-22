@@ -19,17 +19,12 @@
  * Copyright (C) 2007 - 2008 Novell, Inc.
  */
 
-#ifndef NM_SUPPLICANT_MANAGER_H
-#define NM_SUPPLICANT_MANAGER_H
+#ifndef __NETWORKMANAGER_SUPPLICANT_MANAGER_H__
+#define __NETWORKMANAGER_SUPPLICANT_MANAGER_H__
 
-#include <glib-object.h>
+#include "nm-default.h"
 #include "nm-supplicant-types.h"
 #include "nm-device.h"
-
-#define WPAS_DBUS_SERVICE	"fi.w1.wpa_supplicant1"
-#define WPAS_DBUS_PATH		"/fi/w1/wpa_supplicant1"
-#define WPAS_DBUS_INTERFACE	"fi.w1.wpa_supplicant1"
-
 
 G_BEGIN_DECLS
 
@@ -39,8 +34,6 @@ G_BEGIN_DECLS
 #define NM_IS_SUPPLICANT_MANAGER(obj)			(G_TYPE_CHECK_INSTANCE_TYPE ((obj), NM_TYPE_SUPPLICANT_MANAGER))
 #define NM_IS_SUPPLICANT_MANAGER_CLASS(klass)	(G_TYPE_CHECK_CLASS_TYPE ((klass),  NM_TYPE_SUPPLICANT_MANAGER))
 #define NM_SUPPLICANT_MANAGER_GET_CLASS(obj)	(G_TYPE_INSTANCE_GET_CLASS ((obj),  NM_TYPE_SUPPLICANT_MANAGER, NMSupplicantManagerClass))
-
-#define NM_SUPPLICANT_MANAGER_AVAILABLE "available"
 
 struct _NMSupplicantManager
 {
@@ -56,13 +49,8 @@ GType nm_supplicant_manager_get_type (void);
 
 NMSupplicantManager *nm_supplicant_manager_get (void);
 
-NMSupplicantInterface *nm_supplicant_manager_iface_get (NMSupplicantManager *mgr,
-                                                        const char *ifname,
-                                                        gboolean is_wireless);
+NMSupplicantInterface *nm_supplicant_manager_create_interface (NMSupplicantManager *mgr,
+                                                               const char *ifname,
+                                                               gboolean is_wireless);
 
-void nm_supplicant_manager_iface_release (NMSupplicantManager *mgr,
-                                          NMSupplicantInterface *iface);
-
-gboolean nm_supplicant_manager_available (NMSupplicantManager *mgr);
-
-#endif /* NM_SUPPLICANT_MANAGER_H */
+#endif /* __NETWORKMANAGER_SUPPLICANT_MANAGER_H__ */

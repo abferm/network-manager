@@ -18,10 +18,8 @@
  * Copyright (C) 2009 Red Hat, Inc.
  */
 
-#ifndef NM_BLUEZ_COMMON_H
-#define NM_BLUEZ_COMMON_H
-
-#include <config.h>
+#ifndef __NETWORKMANAGER_BLUEZ_COMMON_H__
+#define __NETWORKMANAGER_BLUEZ_COMMON_H__
 
 #define BLUETOOTH_CONNECT_DUN "dun"
 #define BLUETOOTH_CONNECT_NAP "nap"

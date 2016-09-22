@@ -18,17 +18,15 @@
  * Copyright (C) 2009 - 2012 Red Hat, Inc.
  */
 
-#include <glib.h>
+#include "nm-default.h"
+
 #include <string.h>
 
-#include "NetworkManager.h"
-#include "nm-dbus-manager.h"
+#include "nm-dbus-interface.h"
 #include "nm-bluez4-adapter.h"
 #include "nm-bluez-device.h"
 #include "nm-bluez-common.h"
-#include "nm-dbus-glib-types.h"
-#include "nm-logging.h"
-
+#include "nm-core-internal.h"
 
 G_DEFINE_TYPE (NMBluez4Adapter, nm_bluez4_adapter, G_TYPE_OBJECT)
 
@@ -36,7 +34,7 @@ G_DEFINE_TYPE (NMBluez4Adapter, nm_bluez4_adapter, G_TYPE_OBJECT)
 
 typedef struct {
 	char *path;
-	DBusGProxy *proxy;
+	GDBusProxy *proxy;
 	gboolean initialized;
 
 	char *address;
@@ -156,13 +154,13 @@ device_do_remove (NMBluez4Adapter *self, NMBluezDevice *device)
 }
 
 static void
-device_created (DBusGProxy *proxy, const char *path, gpointer user_data)
+device_created (GDBusProxy *proxy, const char *path, gpointer user_data)
 {
 	NMBluez4Adapter *self = NM_BLUEZ4_ADAPTER (user_data);
 	NMBluez4AdapterPrivate *priv = NM_BLUEZ4_ADAPTER_GET_PRIVATE (self);
 	NMBluezDevice *device;
 
-	device = nm_bluez_device_new (path, priv->provider, 4);
+	device = nm_bluez_device_new (path, priv->address, priv->provider, 4);
 	g_signal_connect (device, "initialized", G_CALLBACK (device_initialized), self);
 	g_signal_connect (device, "notify::usable", G_CALLBACK (device_usable), self);
 	g_hash_table_insert (priv->devices, (gpointer) nm_bluez_device_get_path (device), device);
@@ -171,7 +169,7 @@ device_created (DBusGProxy *proxy, const char *path, gpointer user_data)
 }
 
 static void
-device_removed (DBusGProxy *proxy, const char *path, gpointer user_data)
+device_removed (GDBusProxy *proxy, const char *path, gpointer user_data)
 {
 	NMBluez4Adapter *self = NM_BLUEZ4_ADAPTER (user_data);
 	NMBluez4AdapterPrivate *priv = NM_BLUEZ4_ADAPTER_GET_PRIVATE (self);
@@ -184,37 +182,36 @@ device_removed (DBusGProxy *proxy, const char *path, gpointer user_data)
 		device_do_remove (self, device);
 }
 
-
 static void
-get_properties_cb (DBusGProxy *proxy, DBusGProxyCall *call, gpointer user_data)
+get_properties_cb (GObject *proxy, GAsyncResult *result, gpointer user_data)
 {
 	NMBluez4Adapter *self = NM_BLUEZ4_ADAPTER (user_data);
 	NMBluez4AdapterPrivate *priv = NM_BLUEZ4_ADAPTER_GET_PRIVATE (self);
-	GHashTable *properties = NULL;
 	GError *err = NULL;
-	GValue *value;
-	GPtrArray *devices;
+	GVariant *ret, *properties;
+	char **devices;
 	int i;
 
-	if (!dbus_g_proxy_end_call (proxy, call, &err,
-	                            DBUS_TYPE_G_MAP_OF_VARIANT, &properties,
-	                            G_TYPE_INVALID)) {
-		nm_log_warn (LOGD_BT, "bluez error getting adapter properties: %s",
-		             err && err->message ? err->message : "(unknown)");
+	ret = _nm_dbus_proxy_call_finish (G_DBUS_PROXY (proxy), result,
+	                                  G_VARIANT_TYPE ("(a{sv})"), &err);
+	if (!ret) {
+		g_dbus_error_strip_remote_error (err);
+		nm_log_warn (LOGD_BT, "bluez error getting adapter properties: %s", err->message);
 		g_error_free (err);
 		goto done;
 	}
 
-	value = g_hash_table_lookup (properties, "Address");
-	priv->address = value ? g_value_dup_string (value) : NULL;
+	properties = g_variant_get_child_value (ret, 0);
 
-	value = g_hash_table_lookup (properties, "Devices");
-	devices = value ? g_value_get_boxed (value) : NULL;
+	(void) g_variant_lookup (properties, "Address", "s", &priv->address);
+	if (g_variant_lookup (properties, "Devices", "^ao", &devices)) {
+		for (i = 0; devices[i]; i++)
+			device_created (priv->proxy, devices[i], self);
+		g_strfreev (devices);
+	}
 
-	for (i = 0; devices && i < devices->len; i++)
- 		device_created (priv->proxy, g_ptr_array_index (devices, i), self);
-
-	g_hash_table_unref (properties);
+	g_variant_unref (properties);
+	g_variant_unref (ret);
 
 	priv->initialized = TRUE;
 
@@ -226,16 +223,12 @@ static void
 query_properties (NMBluez4Adapter *self)
 {
 	NMBluez4AdapterPrivate *priv = NM_BLUEZ4_ADAPTER_GET_PRIVATE (self);
-	DBusGProxyCall *call;
 
-	call = dbus_g_proxy_begin_call (priv->proxy, "GetProperties",
-	                                get_properties_cb,
-	                                self,
-	                                NULL, G_TYPE_INVALID);
-	if (!call) {
-		nm_log_warn (LOGD_BT, "failed to request Bluetooth adapter properties for %s.",
-		             priv->path);
-	}
+	g_dbus_proxy_call (priv->proxy, "GetProperties",
+	                   NULL,
+	                   G_DBUS_CALL_FLAGS_NONE, -1,
+	                   NULL,
+	                   get_properties_cb, self);
 }
 
 /***********************************************************/
@@ -245,34 +238,25 @@ nm_bluez4_adapter_new (const char *path, NMConnectionProvider *provider)
 {
 	NMBluez4Adapter *self;
 	NMBluez4AdapterPrivate *priv;
-	DBusGConnection *connection;
 
 	self = (NMBluez4Adapter *) g_object_new (NM_TYPE_BLUEZ4_ADAPTER,
 	                                         NM_BLUEZ4_ADAPTER_PATH, path,
 	                                         NULL);
-	if (!self)
-		return NULL;
-
 	priv = NM_BLUEZ4_ADAPTER_GET_PRIVATE (self);
 
 	priv->provider = provider;
 
-	connection = nm_dbus_manager_get_connection (nm_dbus_manager_get ());
-
-	priv->proxy = dbus_g_proxy_new_for_name (connection,
-	                                         BLUEZ_SERVICE,
-	                                         priv->path,
-	                                         BLUEZ4_ADAPTER_INTERFACE);
-
-	dbus_g_proxy_add_signal (priv->proxy, "DeviceCreated",
-	                         DBUS_TYPE_G_OBJECT_PATH, G_TYPE_INVALID);
-	dbus_g_proxy_connect_signal (priv->proxy, "DeviceCreated",
-	                             G_CALLBACK (device_created), self, NULL);
-
-	dbus_g_proxy_add_signal (priv->proxy, "DeviceRemoved",
-	                         DBUS_TYPE_G_OBJECT_PATH, G_TYPE_INVALID);
-	dbus_g_proxy_connect_signal (priv->proxy, "DeviceRemoved",
-	                             G_CALLBACK (device_removed), self, NULL);
+	priv->proxy = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
+	                                             G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
+	                                             NULL,
+	                                             BLUEZ_SERVICE,
+	                                             priv->path,
+	                                             BLUEZ4_ADAPTER_INTERFACE,
+	                                             NULL, NULL);
+	_nm_dbus_signal_connect (priv->proxy, "DeviceCreated", G_VARIANT_TYPE ("(o)"),
+	                         G_CALLBACK (device_created), self);
+	_nm_dbus_signal_connect (priv->proxy, "DeviceRemoved", G_VARIANT_TYPE ("(o)"),
+	                         G_CALLBACK (device_removed), self);
 
 	query_properties (self);
 	return self;
@@ -371,19 +355,17 @@ nm_bluez4_adapter_class_init (NMBluez4AdapterClass *config_class)
 	/* Properties */
 	g_object_class_install_property
 		(object_class, PROP_PATH,
-		 g_param_spec_string (NM_BLUEZ4_ADAPTER_PATH,
-		                      "DBus Path",
-		                      "DBus Path",
+		 g_param_spec_string (NM_BLUEZ4_ADAPTER_PATH, "", "",
 		                      NULL,
-		                      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY));
+		                      G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
+		                      G_PARAM_STATIC_STRINGS));
 
 	g_object_class_install_property
 		(object_class, PROP_ADDRESS,
-		 g_param_spec_string (NM_BLUEZ4_ADAPTER_ADDRESS,
-		                      "Address",
-		                      "Address",
+		 g_param_spec_string (NM_BLUEZ4_ADAPTER_ADDRESS, "", "",
 		                      NULL,
-		                      G_PARAM_READABLE));
+		                      G_PARAM_READABLE |
+		                      G_PARAM_STATIC_STRINGS));
 
 	/* Signals */
 	signals[INITIALIZED] = g_signal_new ("initialized",

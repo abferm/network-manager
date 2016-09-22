@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,12 +15,13 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2007 - 2012 Red Hat, Inc.
+ * Copyright 2007 - 2012 Red Hat, Inc.
  */
 
 #ifndef NM_DEVICE_PRIVATE_H
 #define NM_DEVICE_PRIVATE_H
 
 void _nm_device_set_device_type (NMDevice *device, NMDeviceType dtype);
+NMDeviceType _nm_device_type_for_path (DBusGConnection *connection, const char *path);
 
 #endif /* NM_DEVICE_PRIVATE_H */

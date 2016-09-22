@@ -23,6 +23,8 @@
  *
  */
 
+#include "nm-default.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -33,6 +35,10 @@
 #include <unistd.h>
 
 #include "shvar.h"
+
+#include "nm-core-internal.h"
+
+#define PARSE_WARNING(msg...) nm_log_warn (LOGD_SETTINGS, "    " msg)
 
 /* Open the file <name>, returning a shvarFile on success and NULL on failure.
  * Add a wrinkle to let the caller specify whether or not to create the file
@@ -199,8 +205,8 @@ static const char escapees[] = "\"'\\$~`";		/* must be escaped */
 static const char spaces[] = " \t|&;()<>";		/* only require "" */
 static const char newlines[] = "\n\r";			/* will be removed */
 
-char *
-svEscape (const char *s)
+const char *
+svEscape (const char *s, char **to_free)
 {
 	char *new;
 	int i, j, mangle = 0, space = 0, newline = 0;
@@ -216,8 +222,10 @@ svEscape (const char *s)
 		if (strchr (newlines, s[i]))
 			newline++;
 	}
-	if (!mangle && !space && !newline)
-		return strdup (s);
+	if (!mangle && !space && !newline) {
+		*to_free = NULL;
+		return s;
+	}
 
 	newlen = slen + mangle - newline + 3;	/* 3 is extra ""\0 */
 	new = g_malloc (newlen);
@@ -233,10 +241,10 @@ svEscape (const char *s)
 		new[j++] = s[i];
 	}
 	new[j++] = '"';
-	new[j++] = '\0'
-;
+	new[j++] = '\0';
 	g_assert (j == slen + mangle - newline + 3);
 
+	*to_free = new;
 	return new;
 }
 
@@ -246,6 +254,22 @@ svEscape (const char *s)
  */
 char *
 svGetValue (shvarFile *s, const char *key, gboolean verbatim)
+{
+	char *value;
+
+	value = svGetValueFull (s, key, verbatim);
+	if (value && !*value) {
+		g_free (value);
+		return NULL;
+	}
+	return value;
+}
+
+/* svGetValueFull() is identical to svGetValue() except that
+ * svGetValue() will never return an empty value (but %NULL instead).
+ * svGetValueFull() will return empty values if that is the value for the @key. */
+char *
+svGetValueFull (shvarFile *s, const char *key, gboolean verbatim)
 {
 	char *value = NULL;
 	char *line;
@@ -261,7 +285,8 @@ svGetValue (shvarFile *s, const char *key, gboolean verbatim)
 	for (s->current = s->lineList; s->current; s->current = s->current->next) {
 		line = s->current->data;
 		if (!strncmp (keyString, line, len)) {
-			value = g_strdup (line + len);
+			/* Strip trailing spaces before unescaping to preserve spaces quoted whitespace */
+			value = g_strchomp (g_strdup (line + len));
 			if (!verbatim)
 				svUnescape (value);
 			break;
@@ -269,43 +294,92 @@ svGetValue (shvarFile *s, const char *key, gboolean verbatim)
 	}
 	g_free (keyString);
 
-	if (value && value[0]) {
-		return value;
-	} else {
-		g_free (value);
-		return NULL;
-	}
+	return value;
 }
 
-/* return TRUE if <key> resolves to any truth value (e.g. "yes", "y", "true")
- * return FALSE if <key> resolves to any non-truth value (e.g. "no", "n", "false")
- * return <default> otherwise
+/**
+ * svParseBoolean:
+ * @value: the input string
+ * @fallback: the fallback value
+ *
+ * Parses a string and returns the boolean value it contains or,
+ * in case no valid value is found, the fallback value. Valid values
+ * are: "yes", "true", "t", "y", "1" and "no", "false", "f", "n", "0".
+ *
+ * Returns: the parsed boolean value or @fallback.
  */
-gboolean
-svTrueValue (shvarFile *s, const char *key, gboolean def)
+gint
+svParseBoolean (const char *value, gint fallback)
 {
-	char *tmp;
-	gboolean returnValue = def;
+	if (!value)
+		return fallback;
+
+	if (   !g_ascii_strcasecmp ("yes", value)
+	    || !g_ascii_strcasecmp ("true", value)
+	    || !g_ascii_strcasecmp ("t", value)
+	    || !g_ascii_strcasecmp ("y", value)
+	    || !g_ascii_strcasecmp ("1", value))
+		return TRUE;
+	else if (   !g_ascii_strcasecmp ("no", value)
+	         || !g_ascii_strcasecmp ("false", value)
+	         || !g_ascii_strcasecmp ("f", value)
+	         || !g_ascii_strcasecmp ("n", value)
+	         || !g_ascii_strcasecmp ("0", value))
+		return FALSE;
+
+	return fallback;
+}
+
+/* svGetValueBoolean:
+ * @s: fhe file
+ * @key: the name of the key to read
+ * @fallback: the fallback value in any error case
+ *
+ * Reads a value @key and converts it to a boolean using svParseBoolean().
+ *
+ * Returns: the parsed boolean value or @fallback.
+ */
+gint
+svGetValueBoolean (shvarFile *s, const char *key, gint fallback)
+{
+	gs_free char *tmp = NULL;
 
 	tmp = svGetValue (s, key, FALSE);
-	if (!tmp)
-		return returnValue;
-
-	if (   !g_ascii_strcasecmp ("yes", tmp)
-	    || !g_ascii_strcasecmp ("true", tmp)
-	    || !g_ascii_strcasecmp ("t", tmp)
-	    || !g_ascii_strcasecmp ("y", tmp))
-		returnValue = TRUE;
-	else if (   !g_ascii_strcasecmp ("no", tmp)
-	         || !g_ascii_strcasecmp ("false", tmp)
-	         || !g_ascii_strcasecmp ("f", tmp)
-	         || !g_ascii_strcasecmp ("n", tmp))
-		returnValue = FALSE;
-
-	g_free (tmp);
-	return returnValue;
+	return svParseBoolean (tmp, fallback);
 }
 
+/* svGetValueInt64:
+ * @s: fhe file
+ * @key: the name of the key to read
+ * @base: the numeric base (usually 10). Setting to 0 means "auto". Usually you want 10.
+ * @min: the minimum for range-check
+ * @max: the maximum for range-check
+ * @fallback: the fallback value in any error case
+ *
+ * Reads a value @key and converts it to an integer using _nm_utils_ascii_str_to_int64().
+ * In case of error, @errno will be set and @fallback returned. */
+gint64
+svGetValueInt64 (shvarFile *s, const char *key, guint base, gint64 min, gint64 max, gint64 fallback)
+{
+	char *tmp;
+	gint64 result;
+	int errsv;
+
+	tmp = svGetValueFull (s, key, FALSE);
+	if (!tmp) {
+		errno = 0;
+		return fallback;
+	}
+
+	result = _nm_utils_ascii_str_to_int64 (tmp, base, min, max, fallback);
+	errsv = errno;
+	if (errsv != 0)
+		PARSE_WARNING ("Error reading '%s' value '%s' as integer (%d)", key, tmp, errsv);
+
+	g_free (tmp);
+
+	return result;
+}
 
 /* Set the variable <key> equal to the value <value>.
  * If <key> does not exist, and the <current> pointer is set, append
@@ -315,54 +389,68 @@ svTrueValue (shvarFile *s, const char *key, gboolean def)
 void
 svSetValue (shvarFile *s, const char *key, const char *value, gboolean verbatim)
 {
-	char *newval = NULL, *oldval = NULL;
+	svSetValueFull (s, key, value && value[0] ? value : NULL, verbatim);
+}
+
+/* Same as svSetValue() but it preserves empty @value -- contrary to
+ * svSetValue() for which "" effectively means to remove the value. */
+void
+svSetValueFull (shvarFile *s, const char *key, const char *value, gboolean verbatim)
+{
+	gs_free char *newval_free = NULL;
+	gs_free char *oldval = NULL;
+	const char *newval;
 	char *keyValue;
 
 	g_return_if_fail (s != NULL);
 	g_return_if_fail (key != NULL);
 	/* value may be NULL */
 
-	if (value)
-		newval = verbatim ? g_strdup (value) : svEscape (value);
-	keyValue = g_strdup_printf ("%s=%s", key, newval ? newval : "");
+	if (!value || verbatim)
+		newval = value;
+	else
+		newval = svEscape (value, &newval_free);
+	oldval = svGetValueFull (s, key, FALSE);
 
-	oldval = svGetValue (s, key, FALSE);
-
-	if (!newval || !newval[0]) {
+	if (!newval) {
 		/* delete value */
 		if (oldval) {
 			/* delete line */
 			s->lineList = g_list_remove_link (s->lineList, s->current);
+			g_free (s->current->data);
 			g_list_free_1 (s->current);
 			s->modified = TRUE;
 		}
-		goto bail; /* do not need keyValue */
+		return;
 	}
 
+	keyValue = g_strdup_printf ("%s=%s", key, newval);
 	if (!oldval) {
 		/* append line */
 		s->lineList = g_list_append (s->lineList, keyValue);
 		s->modified = TRUE;
-		goto end;
+		return;
 	}
 
 	if (strcmp (oldval, newval) != 0) {
 		/* change line */
-		if (s->current)
+		if (s->current) {
+			g_free (s->current->data);
 			s->current->data = keyValue;
-		else
+		} else
 			s->lineList = g_list_append (s->lineList, keyValue);
 		s->modified = TRUE;
-	}
+	} else
+		g_free (keyValue);
+}
 
- end:
-	g_free (newval);
-	g_free (oldval);
-	return;
+void
+svSetValueInt64 (shvarFile *s, const char *key, gint64 value)
+{
+	gs_free char *v = NULL;
 
- bail:
-	g_free (keyValue);
-	goto end;
+	v = g_strdup_printf ("%"G_GINT64_FORMAT, value);
+	svSetValueFull (s, key, v, TRUE);
 }
 
 /* Write the current contents iff modified.  Returns FALSE on error

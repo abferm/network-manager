@@ -19,12 +19,11 @@
  * Copyright (C) 2009 - 2011 Red Hat Inc.
  */
 
-#ifndef NM_DEVICE_ADSL_H
-#define NM_DEVICE_ADSL_H
-
-#include <glib-object.h>
+#ifndef __NETWORKMANAGER_DEVICE_ADSL_H__
+#define __NETWORKMANAGER_DEVICE_ADSL_H__
 
 // Parent class
+#include "nm-default.h"
 #include "nm-device.h"
 
 G_BEGIN_DECLS
@@ -36,20 +35,22 @@ G_BEGIN_DECLS
 #define NM_IS_DEVICE_ADSL_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE ((klass),  NM_TYPE_DEVICE_ADSL))
 #define NM_DEVICE_ADSL_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),  NM_TYPE_DEVICE_ADSL, NMDeviceAdslClass))
 
+#define NM_DEVICE_ADSL_ATM_INDEX "atm-index"
+
 typedef struct {
 	NMDevice parent;
 } NMDeviceAdsl;
 
 typedef struct {
 	NMDeviceClass parent;
-
 } NMDeviceAdslClass;
 
 GType nm_device_adsl_get_type (void);
 
 NMDevice *nm_device_adsl_new (const char *udi,
                               const char *iface,
-                              const char *driver);
+                              const char *driver,
+                              int atm_index);
 
 G_END_DECLS
 

@@ -18,6 +18,16 @@
     </defaults>
   </action>
 
+  <action id="org.freedesktop.NetworkManager.reload">
+    <_description>Reload NetworkManager configuration</_description>
+    <_message>System policy prevents reloading NetworkManager</_message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
   <action id="org.freedesktop.NetworkManager.sleep-wake">
     <_description>Put NetworkManager to sleep or wake it up (should only be used by system power management)</_description>
     <_message>System policy prevents putting NetworkManager to sleep or waking it up</_message>
@@ -58,6 +68,7 @@
     <_description>Allow control of network connections</_description>
     <_message>System policy prevents control of network connections</_message>
     <defaults>
+      <allow_any>auth_admin</allow_any>
       <allow_inactive>yes</allow_inactive>
       <allow_active>yes</allow_active>
     </defaults>
@@ -104,6 +115,16 @@
   <action id="org.freedesktop.NetworkManager.settings.modify.hostname">
     <_description>Modify persistent system hostname</_description>
     <_message>System policy prevents modification of the persistent system hostname</_message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.freedesktop.NetworkManager.settings.modify.global-dns">
+    <_description>Modify persistent global DNS configuration</_description>
+    <_message>System policy prevents modification of the persistent global DNS configuration</_message>
     <defaults>
       <allow_any>auth_admin_keep</allow_any>
       <allow_inactive>auth_admin_keep</allow_inactive>

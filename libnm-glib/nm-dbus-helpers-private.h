@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,19 +15,18 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2013 Red Hat, Inc.
+ * Copyright 2013 Red Hat, Inc.
  */
 
 #ifndef NM_DBUS_HELPERS_PRIVATE_H
 #define NM_DBUS_HELPERS_PRIVATE_H
 
-#include <gio/gio.h>
 #include <dbus/dbus.h>
 #include <dbus/dbus-glib-lowlevel.h>
 
-DBusGConnection *_nm_dbus_new_connection (GError **error);
+#include "nm-default.h"
 
-gboolean         _nm_dbus_is_connection_private (DBusGConnection *connection);
+DBusGConnection *_nm_dbus_new_connection (GError **error);
 
 DBusGProxy *     _nm_dbus_new_proxy_for_connection (DBusGConnection *connection,
                                                     const char *path,

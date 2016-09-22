@@ -15,15 +15,19 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2013 Red Hat, Inc.
+ * Copyright 2013 Red Hat, Inc.
  *
  */
 
-#include <glib.h>
+#include "nm-default.h"
+
 #include <string.h>
-#include <nm-utils.h>
-#include <nm-glib-compat.h>
+
+#include "nm-utils.h"
+#include "nm-default.h"
 #include "nm-setting-dcb.h"
+
+#include "nm-test-utils.h"
 
 #define DCB_FLAGS_ALL (NM_SETTING_DCB_FLAG_ENABLE | \
                        NM_SETTING_DCB_FLAG_ADVERTISE | \
@@ -32,7 +36,7 @@
 static void
 test_dcb_flags_valid (void)
 {
-	NMSettingDcb *s_dcb;
+	gs_unref_object NMSettingDcb *s_dcb = NULL;
 	GError *error = NULL;
 	gboolean success;
 	guint i;
@@ -85,7 +89,7 @@ test_dcb_flags_valid (void)
 static void
 test_dcb_flags_invalid (void)
 {
-	NMSettingDcb *s_dcb;
+	gs_unref_object NMSettingDcb *s_dcb = NULL;
 	GError *error = NULL;
 	gboolean success;
 
@@ -144,7 +148,7 @@ test_dcb_flags_invalid (void)
 static void
 test_dcb_app_priorities (void)
 {
-	NMSettingDcb *s_dcb;
+	gs_unref_object NMSettingDcb *s_dcb = NULL;
 	GError *error = NULL;
 	gboolean success;
 
@@ -206,7 +210,7 @@ test_dcb_app_priorities (void)
 static void
 test_dcb_priorities_valid (void)
 {
-	NMSettingDcb *s_dcb;
+	gs_unref_object NMSettingDcb *s_dcb = NULL;
 	GError *error = NULL;
 	gboolean success;
 	guint i;
@@ -265,7 +269,7 @@ test_dcb_priorities_valid (void)
 static void
 test_dcb_bandwidth_sums (void)
 {
-	NMSettingDcb *s_dcb;
+	gs_unref_object NMSettingDcb *s_dcb = NULL;
 	GError *error = NULL;
 	gboolean success;
 
@@ -298,24 +302,11 @@ test_dcb_bandwidth_sums (void)
 
 #define TPATH "/libnm-util/settings/dcb/"
 
+NMTST_DEFINE ();
+
 int main (int argc, char **argv)
 {
-	GError *error = NULL;
-	gboolean success;
-
-	g_test_init (&argc, &argv, NULL);
-
-#if !GLIB_CHECK_VERSION (2, 35, 0)
-	g_type_init ();
-#endif
-
-	success = nm_utils_init (&error);
-	g_assert_no_error (error);
-	g_assert (success);
-
-#if !GLIB_CHECK_VERSION(2,34,0)
-	g_log_set_always_fatal (G_LOG_LEVEL_CRITICAL);
-#endif
+	nmtst_init (&argc, &argv, TRUE);
 
 	g_test_add_func (TPATH "flags-valid", test_dcb_flags_valid);
 	g_test_add_func (TPATH "flags-invalid", test_dcb_flags_invalid);

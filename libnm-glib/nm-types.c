@@ -1,7 +1,5 @@
 /* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 /*
- * libnm_glib -- Access network status & information from glib applications
- *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation; either
@@ -17,12 +15,14 @@
  * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
  * Boston, MA 02110-1301 USA.
  *
- * Copyright (C) 2008 Red Hat, Inc.
+ * Copyright 2008 Red Hat, Inc.
  */
 
-#include <glib.h>
+#include "nm-default.h"
+
 #include <dbus/dbus-glib.h>
 #include <string.h>
+
 #include "nm-types.h"
 #include "nm-types-private.h"
 #include "nm-object-private.h"
@@ -232,9 +232,9 @@ nm_object_array_get_type (void)
 
 gboolean
 _nm_object_array_demarshal (GValue *value,
-                           GPtrArray **dest,
-                           DBusGConnection *connection,
-                           NMObjectCreatorFunc func)
+                            GPtrArray **dest,
+                            DBusGConnection *connection,
+                            NMObjectCreatorFunc func)
 {
 	GPtrArray *temp = NULL;
 	GPtrArray *array;
@@ -419,4 +419,3 @@ nm_ip6_route_object_array_get_type (void)
 		                                         (GBoxedFreeFunc) _nm_ip6_route_object_array_free);
 	return our_type;
 }
-

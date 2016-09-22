@@ -18,23 +18,35 @@
  * Copyright (C) 2013 - 2014 Red Hat, Inc.
  */
 
+#include "nm-default.h"
+
 #include <signal.h>
 #include <string.h>
 #include <stdlib.h>
 #include <gmodule.h>
-#include <gio/gio.h>
 
-#include "nm-logging.h"
 #include "nm-bluez-manager.h"
 #include "nm-device-factory.h"
+#include "nm-setting-bluetooth.h"
 #include "nm-bluez4-manager.h"
 #include "nm-bluez5-manager.h"
 #include "nm-bluez-device.h"
 #include "nm-bluez-common.h"
 #include "nm-connection-provider.h"
 #include "nm-device-bt.h"
+#include "nm-core-internal.h"
+#include "nm-platform.h"
+#include "nm-dbus-compat.h"
 
-#include "nm-dbus-manager.h"
+#define _NMLOG_DOMAIN        LOGD_BT
+#define _NMLOG_PREFIX_NAME   "bluez"
+#define _NMLOG(level, ...) \
+    G_STMT_START { \
+        nm_log ((level), _NMLOG_DOMAIN, \
+                "%s" _NM_UTILS_MACRO_FIRST(__VA_ARGS__), \
+                _NMLOG_PREFIX_NAME": " \
+                _NM_UTILS_MACRO_REST(__VA_ARGS__)); \
+    } G_STMT_END
 
 typedef struct {
 	int bluez_version;
@@ -53,7 +65,7 @@ typedef struct {
 
 static GType nm_bluez_manager_get_type (void);
 
-static void device_factory_interface_init (NMDeviceFactory *factory_iface);
+static void device_factory_interface_init (NMDeviceFactoryInterface *factory_iface);
 
 G_DEFINE_TYPE_EXTENDED (NMBluezManager, nm_bluez_manager, G_TYPE_OBJECT, 0,
                         G_IMPLEMENT_INTERFACE (NM_TYPE_DEVICE_FACTORY, device_factory_interface_init))
@@ -62,18 +74,10 @@ static void check_bluez_and_try_setup (NMBluezManager *self);
 
 /**************************************************************************/
 
-#define PLUGIN_TYPE NM_DEVICE_TYPE_BT
-
 G_MODULE_EXPORT NMDeviceFactory *
 nm_device_factory_create (GError **error)
 {
 	return (NMDeviceFactory *) g_object_new (NM_TYPE_BLUEZ_MANAGER, NULL);
-}
-
-G_MODULE_EXPORT NMDeviceType
-nm_device_factory_get_device_type (void)
-{
-	return PLUGIN_TYPE;
 }
 
 /************************************************************************/
@@ -152,12 +156,12 @@ manager_bdaddr_added_cb (NMBluez4Manager *bluez_mgr,
 	if (!device)
 		return;
 
-	nm_log_info (LOGD_BT, "BT device %s (%s) added (%s%s%s)",
-	             name,
-	             bdaddr,
-	             has_dun ? "DUN" : "",
-	             has_dun && has_nap ? " " : "",
-	             has_nap ? "NAP" : "");
+	_LOGI ("BT device %s (%s) added (%s%s%s)",
+	       name,
+	       bdaddr,
+	       has_dun ? "DUN" : "",
+	       has_dun && has_nap ? " " : "",
+	       has_nap ? "NAP" : "");
 	g_signal_emit_by_name (self, NM_DEVICE_FACTORY_DEVICE_ADDED, device);
 	g_object_unref (device);
 }
@@ -169,7 +173,7 @@ setup_version_number (NMBluezManager *self, int bluez_version)
 
 	g_return_if_fail (!priv->bluez_version);
 
-	nm_log_info (LOGD_BT, "use BlueZ version %d", bluez_version);
+	_LOGI ("use BlueZ version %d", bluez_version);
 
 	priv->bluez_version = bluez_version;
 
@@ -241,7 +245,7 @@ check_bluez_and_try_setup_final_step (NMBluezManager *self, int bluez_version, c
 		setup_bluez5 (self);
 		break;
 	default:
-		nm_log_dbg (LOGD_BT, "detecting BlueZ version failed: %s", reason);
+		_LOGD ("detecting BlueZ version failed: %s", reason);
 
 		/* cancel current attempts to detect the version. */
 		cleanup_checking (self, FALSE);
@@ -282,10 +286,13 @@ check_bluez_and_try_setup_do_introspect (GObject *source_object,
 
 	g_clear_object (&priv->async_cancellable);
 
-	result = g_dbus_proxy_call_finish (priv->introspect_proxy, res, &error);
-
+	result = _nm_dbus_proxy_call_finish (priv->introspect_proxy, res,
+	                                     G_VARIANT_TYPE ("(s)"), &error);
 	if (!result) {
-		char *reason2 = g_strdup_printf ("introspect failed with %s", error->message);
+		char *reason2;
+
+		g_dbus_error_strip_remote_error (error);
+		reason2 = g_strdup_printf ("introspect failed with %s", error->message);
 		check_bluez_and_try_setup_final_step (self, 0, reason2);
 		g_error_free (error);
 		g_free (reason2);
@@ -368,6 +375,17 @@ check_bluez_and_try_setup (NMBluezManager *self)
 	                          async_data_pack (self));
 }
 
+static void
+start (NMDeviceFactory *factory)
+{
+	check_bluez_and_try_setup (NM_BLUEZ_MANAGER (factory));
+}
+
+NM_DEVICE_FACTORY_DECLARE_TYPES (
+	NM_DEVICE_FACTORY_DECLARE_LINK_TYPES    (NM_LINK_TYPE_BNEP)
+	NM_DEVICE_FACTORY_DECLARE_SETTING_TYPES (NM_SETTING_BLUETOOTH_SETTING_NAME)
+)
+
 /*********************************************************************/
 
 static void
@@ -388,16 +406,10 @@ dispose (GObject *object)
 	cleanup_checking (self, TRUE);
 
 	priv->bluez_version = 0;
-}
 
-static void
-constructed (GObject *object)
-{
-	NMBluezManager *self = NM_BLUEZ_MANAGER (object);
+	g_clear_object (&priv->provider);
 
-	G_OBJECT_CLASS (nm_bluez_manager_parent_class)->constructed (object);
-
-	check_bluez_and_try_setup (self);
+	G_OBJECT_CLASS (nm_bluez_manager_parent_class)->dispose (object);
 }
 
 static void
@@ -405,13 +417,27 @@ nm_bluez_manager_init (NMBluezManager *self)
 {
 	NMBluezManagerPrivate *priv = NM_BLUEZ_MANAGER_GET_PRIVATE (self);
 
-	priv->provider = nm_connection_provider_get ();
-	g_assert (priv->provider);
+	priv->provider = g_object_ref (nm_connection_provider_get ());
+}
+
+static NMDevice *
+create_device (NMDeviceFactory *factory,
+               const char *iface,
+               const NMPlatformLink *plink,
+               NMConnection *connection,
+               gboolean *out_ignore)
+{
+	g_warn_if_fail (plink->type == NM_LINK_TYPE_BNEP);
+	*out_ignore = TRUE;
+	return NULL;
 }
 
 static void
-device_factory_interface_init (NMDeviceFactory *factory_iface)
+device_factory_interface_init (NMDeviceFactoryInterface *factory_iface)
 {
+	factory_iface->get_supported_types = get_supported_types;
+	factory_iface->create_device = create_device;
+	factory_iface->start = start;
 }
 
 static void
@@ -423,6 +449,5 @@ nm_bluez_manager_class_init (NMBluezManagerClass *klass)
 
 	/* virtual methods */
 	object_class->dispose = dispose;
-	object_class->constructed = constructed;
 }
 

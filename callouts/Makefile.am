@@ -1,13 +1,12 @@
 SUBDIRS = . tests
 
 AM_CPPFLAGS = \
-	-I${top_srcdir}/include \
-	-I${top_builddir}/include \
-	-I${top_srcdir}/libnm-util \
-	-I${top_builddir}/libnm-util \
+	-I${top_srcdir}/shared \
+	-I${top_builddir}/shared \
+	-I${top_srcdir}/libnm-core \
+	-I${top_builddir}/libnm-core \
 	$(GLIB_CFLAGS) \
-	$(DBUS_CFLAGS) \
-	-DNM_VERSION_MAX_ALLOWED=NM_VERSION_NEXT_STABLE \
+	-DNETWORKMANAGER_COMPILATION \
 	-DNMCONFDIR=\"$(nmconfdir)\" \
 	-DSYSCONFDIR=\"$(sysconfdir)\" \
 	-DLIBEXECDIR=\"$(libexecdir)\"
@@ -22,20 +21,10 @@ noinst_LTLIBRARIES = \
 
 dbusservicedir = $(DBUS_SYS_DIR)
 dbusservice_DATA = \
-	nm-dispatcher.conf \
-	nm-avahi-autoipd.conf
+	nm-dispatcher.conf
 
 libexec_PROGRAMS = \
-	nm-dispatcher \
-	nm-avahi-autoipd.action
-
-
-nm_avahi_autoipd_action_SOURCES = \
-	nm-avahi-autoipd-action.c
-
-nm_avahi_autoipd_action_LDADD = \
-	$(DBUS_LIBS) \
-	$(GLIB_LIBS)
+	nm-dispatcher
 
 
 nm_dispatcher_SOURCES = \
@@ -45,12 +34,31 @@ nm_dispatcher_SOURCES = \
 	nm-dispatcher-utils.h
 
 nm_dispatcher_LDADD = \
-	$(top_builddir)/libnm-util/libnm-util.la \
-	$(DBUS_LIBS) \
+	$(top_builddir)/libnm/libnm.la \
+	libnmdbus-dispatcher.la \
 	$(GLIB_LIBS)
 
-nm-dispatcher-glue.h: nm-dispatcher.xml
-	$(AM_V_GEN) dbus-binding-tool --prefix=nm_dispatcher --mode=glib-server --output=$@ $<
+# See note about gdbus-codegen in introspection/Makefile.am
+
+noinst_LTLIBRARIES += libnmdbus-dispatcher.la
+
+nodist_libnmdbus_dispatcher_la_SOURCES = \
+	nmdbus-dispatcher.c \
+	nmdbus-dispatcher.h
+
+libnmdbus_dispatcher_la_CPPFLAGS = $(filter-out -DGLIB_VERSION_MAX_ALLOWED%,$(AM_CPPFLAGS))
+
+nmdbus-dispatcher.h: nm-dispatcher.xml
+	$(AM_V_GEN) gdbus-codegen \
+		--generate-c-code $(basename $@) \
+		--c-namespace NMDBus \
+		--interface-prefix org.freedesktop \
+		$<
+
+nmdbus-dispatcher.c: nmdbus-dispatcher.h
+	@true
+
+BUILT_SOURCES = nmdbus-dispatcher.h nmdbus-dispatcher.c
 
 ###########################################
 # dispatcher envp
@@ -64,13 +72,9 @@ libtest_dispatcher_envp_la_CPPFLAGS = \
 	$(AM_CPPFLAGS)
 
 libtest_dispatcher_envp_la_LIBADD = \
-	$(top_builddir)/libnm-util/libnm-util.la \
-	$(GLIB_LIBS) \
-	$(DBUS_LIBS)
+	$(top_builddir)/libnm/libnm.la \
+	$(GLIB_LIBS)
 
-
-udevrulesdir = $(UDEV_BASE_DIR)/rules.d
-udevrules_DATA = 77-nm-olpc-mesh.rules
 
 dbusactivationdir = $(datadir)/dbus-1/system-services
 dbusactivation_in_files = org.freedesktop.nm_dispatcher.service.in
@@ -90,14 +94,12 @@ install-data-hook:
 	   $(mkinstalldirs) -m 0755 $(DESTDIR)$(dispatcherdir)
 	   $(mkinstalldirs) -m 0755 $(DESTDIR)$(dispatcherdir)/pre-down.d
 	   $(mkinstalldirs) -m 0755 $(DESTDIR)$(dispatcherdir)/pre-up.d
+	   $(mkinstalldirs) -m 0755 $(DESTDIR)$(dispatcherdir)/no-wait.d
 
-BUILT_SOURCES = nm-dispatcher-glue.h
-
-CLEANFILES = $(BUILT_SOURCES) $(dbusactivation_DATA)
+CLEANFILES = $(nodist_libnmdbus_dispatcher_la_SOURCES) $(dbusactivation_DATA)
 
 EXTRA_DIST = \
 	$(dbusservice_DATA) \
-	$(udevrules_DATA) \
 	$(dbusactivation_in_files) \
 	nm-dispatcher.xml
 

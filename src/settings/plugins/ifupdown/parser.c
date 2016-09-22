@@ -1,4 +1,4 @@
-/* -*- Mode: C; tab-width: 5; indent-tabs-mode: t; c-basic-offset: 5 -*- */
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: t; c-basic-offset: 4 -*- */
 
 /* NetworkManager system settings service (ifupdown)
  *
@@ -21,23 +21,16 @@
  * (C) Copyright 2008 Canonical Ltd.
  */
 
+#include "nm-default.h"
+
 #include <string.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
 #include <errno.h>
-
-#include <nm-connection.h>
-#include <NetworkManager.h>
-#include <nm-setting-connection.h>
-#include <nm-setting-ip4-config.h>
-#include <nm-setting-ppp.h>
-#include <nm-setting-wired.h>
-#include <nm-setting-wireless.h>
-#include <nm-setting-8021x.h>
-#include <nm-system-config-interface.h>
-#include <nm-utils.h>
-#include <nm-logging.h>
 #include <ctype.h>
+
+#include "nm-core-internal.h"
+#include "nm-settings-plugin.h"
 
 #include "parser.h"
 #include "plugin.h"
@@ -101,6 +94,8 @@ update_wireless_setting_from_if_block(NMConnection *connection,
 	const gchar* value = ifparser_getkey (block, "inet");
 	struct _Mapping mapping[] = {
 		{"ssid", "ssid"},
+		{"essid", "ssid"},
+		{"mode", "mode"},
 		{ NULL, NULL}
 	};
 
@@ -119,14 +114,22 @@ update_wireless_setting_from_if_block(NMConnection *connection,
 			const gchar* newkey = map_by_mapping(mapping, curr->key+wireless_l);
 			nm_log_info (LOGD_SETTINGS, "wireless setting key: %s='%s'", newkey, curr->data);
 			if(newkey && !strcmp("ssid", newkey)) {
-				GByteArray *ssid;
+				GBytes *ssid;
 				gint len = strlen(curr->data);
 
-				ssid = g_byte_array_sized_new (len);
-				g_byte_array_append (ssid, (const guint8 *) curr->data, len);
+				ssid = g_bytes_new (curr->data, len);
 				g_object_set (wireless_setting, NM_SETTING_WIRELESS_SSID, ssid, NULL);
-				g_byte_array_free (ssid, TRUE);
+				g_bytes_unref (ssid);
 				nm_log_info (LOGD_SETTINGS, "setting wireless ssid = %d", len);
+			} else if(newkey && !strcmp("mode", newkey)) {
+				if (!g_ascii_strcasecmp (curr->data, "Managed") || !g_ascii_strcasecmp (curr->data, "Auto"))
+					g_object_set (wireless_setting, NM_SETTING_WIRELESS_MODE, NM_SETTING_WIRELESS_MODE_INFRA, NULL);
+				else if (!g_ascii_strcasecmp (curr->data, "Ad-Hoc"))
+					g_object_set (wireless_setting, NM_SETTING_WIRELESS_MODE, NM_SETTING_WIRELESS_MODE_ADHOC, NULL);
+				else if (!g_ascii_strcasecmp (curr->data, "Master"))
+					g_object_set (wireless_setting, NM_SETTING_WIRELESS_MODE, NM_SETTING_WIRELESS_MODE_AP, NULL);
+				else
+					nm_log_warn (LOGD_SETTINGS, "Invalid mode '%s' (not 'Ad-Hoc', 'Ap', 'Managed', or 'Auto')", curr->data);
 			} else {
 				g_object_set(wireless_setting,
 					   newkey, curr->data,
@@ -137,13 +140,12 @@ update_wireless_setting_from_if_block(NMConnection *connection,
 			const gchar* newkey = map_by_mapping(mapping, curr->key+wpa_l);
 
 			if(newkey && !strcmp("ssid", newkey)) {
-				GByteArray *ssid;
+				GBytes *ssid;
 				gint len = strlen(curr->data);
 
-				ssid = g_byte_array_sized_new (len);
-				g_byte_array_append (ssid, (const guint8 *) curr->data, len);
+				ssid = g_bytes_new (curr->data, len);
 				g_object_set (wireless_setting, NM_SETTING_WIRELESS_SSID, ssid, NULL);
-				g_byte_array_free (ssid, TRUE);
+				g_bytes_unref (ssid);
 				nm_log_info (LOGD_SETTINGS, "setting wpa ssid = %d", len);
 			} else if(newkey) {
 
@@ -325,11 +327,9 @@ update_wireless_security_setting_from_if_block(NMConnection *connection,
 			IfupdownStrDupeFunc dupe_func = map_by_mapping (dupe_mapping, curr->key+wireless_l);
 			IfupdownStrToTypeFunc type_map_func = map_by_mapping (type_mapping, curr->key+wireless_l);
 			GFreeFunc free_func = map_by_mapping (free_type_mapping, curr->key+wireless_l);
-			if(!newkey || !dupe_func) {
-				nm_log_warn (LOGD_SETTINGS, "no (wireless) mapping found for key: %s",
-				             curr->key);
+			if(!newkey || !dupe_func)
 				goto next;
-			}
+
 			property_value = (*dupe_func) (curr->data, connection);
 			nm_log_info (LOGD_SETTINGS, "setting wireless security key: %s=%s",
 			             newkey, property_value);
@@ -360,15 +360,15 @@ update_wireless_security_setting_from_if_block(NMConnection *connection,
 			IfupdownStrDupeFunc dupe_func = map_by_mapping (dupe_mapping, curr->key+wpa_l);
 			IfupdownStrToTypeFunc type_map_func = map_by_mapping (type_mapping, curr->key+wpa_l);
 			GFreeFunc free_func = map_by_mapping (free_type_mapping, curr->key+wpa_l);
-			if(!newkey || !dupe_func) {
+			if(!newkey || !dupe_func)
 				goto next;
-			}
+
 			property_value = (*dupe_func) (curr->data, connection);
 			nm_log_info (LOGD_SETTINGS, "setting wpa security key: %s=%s",
 			             newkey,
 #ifdef DEBUG_SECRETS
 			             property_value
-#else // DEBUG_SECRETS
+#else /* DEBUG_SECRETS */
 			             !strcmp("key", newkey) ||
 			             !strcmp("leap-password", newkey) ||
 			             !strcmp("pin", newkey) ||
@@ -379,7 +379,7 @@ update_wireless_security_setting_from_if_block(NMConnection *connection,
 			             !strcmp("wep-key3", newkey) ||
 			             NULL ?
 			             "<omitted>" : property_value
-#endif // DEBUG_SECRETS
+#endif /* DEBUG_SECRETS */
 			             );
 
 			if (type_map_func) {
@@ -417,19 +417,8 @@ update_wired_setting_from_if_block(NMConnection *connection,
 	nm_connection_add_setting(connection, NM_SETTING(s_wired));
 }
 
-static GQuark
-eni_plugin_error_quark() {
-	static GQuark error_quark = 0;
-
-	if(!error_quark) {
-		error_quark = g_quark_from_static_string ("eni-plugin-error-quark");
-	}
-
-	return error_quark;
-}
-
 static void
-ifupdown_ip4_add_dns (NMSettingIP4Config *s_ip4, const char *dns)
+ifupdown_ip4_add_dns (NMSettingIPConfig *s_ip4, const char *dns)
 {
 	guint32 addr;
 	char **list, **iter;
@@ -447,7 +436,7 @@ ifupdown_ip4_add_dns (NMSettingIP4Config *s_ip4, const char *dns)
 			continue;
 		}
 
-		if (!nm_setting_ip4_config_add_dns (s_ip4, addr))
+		if (!nm_setting_ip_config_add_dns (s_ip4, *iter))
 			nm_log_warn (LOGD_SETTINGS, "    duplicate DNS domain '%s'", *iter);
 	}
 	g_strfreev (list);
@@ -459,15 +448,15 @@ update_ip4_setting_from_if_block(NMConnection *connection,
 						   GError **error)
 {
 
-	NMSettingIP4Config *s_ip4 = NM_SETTING_IP4_CONFIG (nm_setting_ip4_config_new());
+	NMSettingIPConfig *s_ip4 = NM_SETTING_IP_CONFIG (nm_setting_ip4_config_new());
 	const char *type = ifparser_getkey(block, "inet");
 	gboolean is_static = type && !strcmp("static", type);
 
 	if (!is_static) {
-		g_object_set (s_ip4, NM_SETTING_IP4_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_AUTO, NULL);
+		g_object_set (s_ip4, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_AUTO, NULL);
 	} else {
-		guint32 tmp_addr, tmp_mask, tmp_gw;
-		NMIP4Address *addr;
+		guint32 tmp_mask;
+		NMIPAddress *addr;
 		const char *address_v;
 		const char *netmask_v;
 		const char *gateway_v;
@@ -479,10 +468,9 @@ update_ip4_setting_from_if_block(NMConnection *connection,
 
 		/* Address */
 		address_v = ifparser_getkey (block, "address");
-		if (!address_v || !inet_pton (AF_INET, address_v, &tmp_addr)) {
-			g_set_error (error, eni_plugin_error_quark (), 0,
-			             "Missing IPv4 address '%s'",
-			             address_v ? address_v : "(none)");
+		if (!address_v) {
+			g_set_error (error, NM_SETTINGS_ERROR, NM_SETTINGS_ERROR_INVALID_CONNECTION,
+			             "Missing IPv4 address");
 			goto error;
 		}
 
@@ -491,13 +479,8 @@ update_ip4_setting_from_if_block(NMConnection *connection,
 		if (netmask_v) {
 			if (strlen (netmask_v) < 7) {
 				netmask_int = atoi (netmask_v);
-				if (netmask_int > 32) {
-					g_set_error (error, eni_plugin_error_quark (), 0,
-								"Invalid IPv4 netmask '%s'", netmask_v);
-					goto error;
-				}
 			} else if (!inet_pton (AF_INET, netmask_v, &tmp_mask)) {
-				g_set_error (error, eni_plugin_error_quark (), 0,
+				g_set_error (error, NM_SETTINGS_ERROR, NM_SETTINGS_ERROR_INVALID_CONNECTION,
 						   "Invalid IPv4 netmask '%s'", netmask_v);
 				goto error;
 			} else {
@@ -505,29 +488,30 @@ update_ip4_setting_from_if_block(NMConnection *connection,
 			}
 		}
 
-		/* gateway */
-		gateway_v = ifparser_getkey (block, "gateway");
-		if (!gateway_v)
-			gateway_v = address_v;  /* dcbw: whaaa?? */
-		if (!inet_pton (AF_INET, gateway_v, &tmp_gw)) {
-			g_set_error (error, eni_plugin_error_quark (), 0,
-					   "Invalid IPv4 gateway '%s'", gateway_v);
-			goto error;
-		}
-
 		/* Add the new address to the setting */
-		addr = nm_ip4_address_new ();
-		nm_ip4_address_set_address (addr, tmp_addr);
-		nm_ip4_address_set_prefix (addr, netmask_int);
-		nm_ip4_address_set_gateway (addr, tmp_gw);
+		addr = nm_ip_address_new (AF_INET, address_v, netmask_int, error);
+		if (!addr)
+			goto error;
 
-		if (nm_setting_ip4_config_add_address (s_ip4, addr)) {
+		if (nm_setting_ip_config_add_address (s_ip4, addr)) {
 			nm_log_info (LOGD_SETTINGS, "addresses count: %d",
-			             nm_setting_ip4_config_get_num_addresses (s_ip4));
+			             nm_setting_ip_config_get_num_addresses (s_ip4));
 		} else {
 			nm_log_info (LOGD_SETTINGS, "ignoring duplicate IP4 address");
 		}
-		nm_ip4_address_unref (addr);
+		nm_ip_address_unref (addr);
+
+		/* gateway */
+		gateway_v = ifparser_getkey (block, "gateway");
+		if (gateway_v) {
+			if (!nm_utils_ipaddr_valid (AF_INET, gateway_v)) {
+				g_set_error (error, NM_SETTINGS_ERROR, NM_SETTINGS_ERROR_INVALID_CONNECTION,
+				             "Invalid IPv4 gateway '%s'", gateway_v);
+				goto error;
+			}
+			if (!nm_setting_ip_config_get_gateway (s_ip4))
+				g_object_set (s_ip4, NM_SETTING_IP_CONFIG_GATEWAY, gateway_v, NULL);
+		}
 
 		nameserver_v = ifparser_getkey (block, "dns-nameserver");
 		ifupdown_ip4_add_dns (s_ip4, nameserver_v);
@@ -535,7 +519,7 @@ update_ip4_setting_from_if_block(NMConnection *connection,
 		nameservers_v = ifparser_getkey (block, "dns-nameservers");
 		ifupdown_ip4_add_dns (s_ip4, nameservers_v);
 
-		if (!nm_setting_ip4_config_get_num_dns (s_ip4))
+		if (!nm_setting_ip_config_get_num_dns (s_ip4))
 			nm_log_info (LOGD_SETTINGS, "No dns-nameserver configured in /etc/network/interfaces");
 
 		/* DNS searches */
@@ -546,13 +530,13 @@ update_ip4_setting_from_if_block(NMConnection *connection,
 				g_strstrip (*iter);
 				if (g_ascii_isspace (*iter[0]))
 					continue;
-				if (!nm_setting_ip4_config_add_dns_search (s_ip4, *iter))
+				if (!nm_setting_ip_config_add_dns_search (s_ip4, *iter))
 					nm_log_warn (LOGD_SETTINGS, "    duplicate DNS domain '%s'", *iter);
 			}
 			g_strfreev (list);
 		}
 
-		g_object_set (s_ip4, NM_SETTING_IP4_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_MANUAL, NULL);
+		g_object_set (s_ip4, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP4_CONFIG_METHOD_MANUAL, NULL);
 	}
 
 	nm_connection_add_setting (connection, NM_SETTING (s_ip4));
@@ -564,7 +548,7 @@ error:
 }
 
 static void
-ifupdown_ip6_add_dns (NMSettingIP6Config *s_ip6, const char *dns)
+ifupdown_ip6_add_dns (NMSettingIPConfig *s_ip6, const char *dns)
 {
 	struct in6_addr addr;
 	char **list, **iter;
@@ -582,7 +566,7 @@ ifupdown_ip6_add_dns (NMSettingIP6Config *s_ip6, const char *dns)
 			continue;
 		}
 
-		if (!nm_setting_ip6_config_add_dns (s_ip6, &addr))
+		if (!nm_setting_ip_config_add_dns (s_ip6, *iter))
 			nm_log_warn (LOGD_SETTINGS, "    duplicate DNS domain '%s'", *iter);
 	}
 	g_strfreev (list);
@@ -593,16 +577,15 @@ update_ip6_setting_from_if_block(NMConnection *connection,
 						   if_block *block,
 						   GError **error)
 {
-	NMSettingIP6Config *s_ip6 = NM_SETTING_IP6_CONFIG (nm_setting_ip6_config_new());
+	NMSettingIPConfig *s_ip6 = NM_SETTING_IP_CONFIG (nm_setting_ip6_config_new());
 	const char *type = ifparser_getkey(block, "inet6");
 	gboolean is_static = type && (!strcmp("static", type) ||
 							!strcmp("v4tunnel", type));
 
 	if (!is_static) {
-		g_object_set(s_ip6, NM_SETTING_IP6_CONFIG_METHOD, NM_SETTING_IP6_CONFIG_METHOD_AUTO, NULL);
+		g_object_set(s_ip6, NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP6_CONFIG_METHOD_AUTO, NULL);
 	} else {
-		struct in6_addr tmp_addr, tmp_gw;
-		NMIP6Address *addr;
+		NMIPAddress *addr;
 		const char *address_v;
 		const char *prefix_v;
 		const char *gateway_v;
@@ -614,10 +597,9 @@ update_ip6_setting_from_if_block(NMConnection *connection,
 
 		/* Address */
 		address_v = ifparser_getkey(block, "address");
-		if (!address_v || !inet_pton (AF_INET6, address_v, &tmp_addr)) {
-			g_set_error (error, eni_plugin_error_quark (), 0,
-			             "Missing IPv6 address '%s'",
-			             address_v ? address_v : "(none)");
+		if (!address_v) {
+			g_set_error (error, NM_SETTINGS_ERROR, NM_SETTINGS_ERROR_INVALID_CONNECTION,
+			             "Missing IPv6 address");
 			goto error;
 		}
 
@@ -626,29 +608,30 @@ update_ip6_setting_from_if_block(NMConnection *connection,
 		if (prefix_v)
 			prefix_int = g_ascii_strtoll (prefix_v, NULL, 10);
 
-		/* Gateway */
-		gateway_v = ifparser_getkey (block, "gateway");
-		if (!gateway_v)
-			gateway_v = address_v;  /* dcbw: whaaa?? */
-		if (!inet_pton (AF_INET6, gateway_v, &tmp_gw)) {
-			g_set_error (error, eni_plugin_error_quark (), 0,
-					   "Invalid IPv6 gateway '%s'", gateway_v);
-			goto error;
-		}
-
 		/* Add the new address to the setting */
-		addr = nm_ip6_address_new ();
-		nm_ip6_address_set_address (addr, &tmp_addr);
-		nm_ip6_address_set_prefix (addr, prefix_int);
-		nm_ip6_address_set_gateway (addr, &tmp_gw);
+		addr = nm_ip_address_new (AF_INET6, address_v, prefix_int, error);
+		if (!addr)
+			goto error;
 
-		if (nm_setting_ip6_config_add_address (s_ip6, addr)) {
+		if (nm_setting_ip_config_add_address (s_ip6, addr)) {
 			nm_log_info (LOGD_SETTINGS, "addresses count: %d",
-			             nm_setting_ip6_config_get_num_addresses (s_ip6));
+			             nm_setting_ip_config_get_num_addresses (s_ip6));
 		} else {
 			nm_log_info (LOGD_SETTINGS, "ignoring duplicate IP6 address");
 		}
-		nm_ip6_address_unref (addr);
+		nm_ip_address_unref (addr);
+
+		/* gateway */
+		gateway_v = ifparser_getkey (block, "gateway");
+		if (gateway_v) {
+			if (!nm_utils_ipaddr_valid (AF_INET6, gateway_v)) {
+				g_set_error (error, NM_SETTINGS_ERROR, NM_SETTINGS_ERROR_INVALID_CONNECTION,
+				             "Invalid IPv6 gateway '%s'", gateway_v);
+				goto error;
+			}
+			if (!nm_setting_ip_config_get_gateway (s_ip6))
+				g_object_set (s_ip6, NM_SETTING_IP_CONFIG_GATEWAY, gateway_v, NULL);
+		}
 
 		nameserver_v = ifparser_getkey(block, "dns-nameserver");
 		ifupdown_ip6_add_dns (s_ip6, nameserver_v);
@@ -656,7 +639,7 @@ update_ip6_setting_from_if_block(NMConnection *connection,
 		nameservers_v = ifparser_getkey(block, "dns-nameservers");
 		ifupdown_ip6_add_dns (s_ip6, nameservers_v);
 
-		if (!nm_setting_ip6_config_get_num_dns (s_ip6))
+		if (!nm_setting_ip_config_get_num_dns (s_ip6))
 			nm_log_info (LOGD_SETTINGS, "No dns-nameserver configured in /etc/network/interfaces");
 
 		/* DNS searches */
@@ -667,14 +650,14 @@ update_ip6_setting_from_if_block(NMConnection *connection,
 				g_strstrip (*iter);
 				if (isblank (*iter[0]))
 					continue;
-				if (!nm_setting_ip6_config_add_dns_search (s_ip6, *iter))
+				if (!nm_setting_ip_config_add_dns_search (s_ip6, *iter))
 					nm_log_warn (LOGD_SETTINGS, "    duplicate DNS domain '%s'", *iter);
 			}
 			g_strfreev (list);
 		}
 
 		g_object_set (s_ip6,
-		              NM_SETTING_IP6_CONFIG_METHOD, NM_SETTING_IP6_CONFIG_METHOD_MANUAL,
+		              NM_SETTING_IP_CONFIG_METHOD, NM_SETTING_IP6_CONFIG_METHOD_MANUAL,
 		              NULL);
 	}
 
@@ -709,7 +692,7 @@ ifupdown_update_connection_from_if_block (NMConnection *connection,
 	idstr = g_strconcat ("Ifupdown (", block->name, ")", NULL);
 	uuid_base = idstr;
 
-	uuid = nm_utils_uuid_generate_from_string (uuid_base);
+	uuid = nm_utils_uuid_generate_from_string (uuid_base, -1, NM_UTILS_UUID_TYPE_LEGACY, NULL);
 	g_object_set (s_con,
 	              NM_SETTING_CONNECTION_TYPE, type,
 	              NM_SETTING_CONNECTION_INTERFACE_NAME, block->name,
