@@ -1,3 +1,9 @@
+network-manager (1.2.4-2~bpo80+1) jessie-backports; urgency=medium
+
+  * Rebuild for jessie-backports.
+
+ -- Alex Ferm (PetroPower) <aferm@petropower.com>  Thu, 22 Sep 2016 11:06:07 -0500
+
 network-manager (1.2.4-2) unstable; urgency=medium
 
   * Demote isc-dhcp-client from Depends to Recommends.
